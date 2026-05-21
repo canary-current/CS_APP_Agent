@@ -1,11 +1,13 @@
 """
 save_program_md: persist collected program data as a structured Markdown file.
 
-Output path: schools/{school-slug}/{program-slug}.md
+Output path: schools/{School Full Name}/{Program Full Name}.md
 
-The files are designed to be fed as context ("skills") to an LLM during the
-application process — each section maps directly to a field the LLM will need
-when helping draft SOPs, compare programs, or check eligibility.
+Folder and file names preserve the original casing and spaces — only
+characters that are illegal on common filesystems are stripped.
+A slug-based deduplication check prevents duplicate school directories
+when the agent is called with an abbreviation vs. the full name
+(e.g. "HKUST" vs. "Hong Kong University of Science and Technology").
 """
 
 from __future__ import annotations
@@ -16,13 +18,37 @@ from models import ProgramInfo, ApplicationExample
 
 _SCHOOLS_DIR = Path(__file__).parent.parent / "schools"
 
+# Characters that are illegal on macOS / Windows / Linux filesystems.
+_UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _safe(text: str) -> str:
+    """Strip filesystem-unsafe characters; preserve spaces and original case."""
+    return _UNSAFE.sub("", text).strip()
+
 
 def _slugify(text: str) -> str:
-    """'Stanford University' → 'stanford-university'"""
+    """Lowercase hyphenated slug used only for deduplication comparisons."""
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_]+", "-", text)
     return text.strip("-")
+
+
+def _resolve_school_dir(school: str) -> Path:
+    """
+    Return the directory for this school.
+
+    If a slug-equivalent directory already exists (e.g. the full-name folder
+    was created before and now the agent passes an abbreviation, or vice versa),
+    reuse the existing directory to avoid duplicates.
+    """
+    target_slug = _slugify(school)
+    if _SCHOOLS_DIR.exists():
+        for d in _SCHOOLS_DIR.iterdir():
+            if d.is_dir() and _slugify(d.name) == target_slug:
+                return d
+    return _SCHOOLS_DIR / _safe(school)
 
 
 def save_program_md(
@@ -38,10 +64,18 @@ def save_program_md(
 
     Returns:
         Path of the written file.
+
+    Raises:
+        ValueError: if info.url (source) is empty.
     """
-    school_dir = _SCHOOLS_DIR / _slugify(info.school)
+    if not info.url:
+        raise ValueError(
+            f"source URL is required but missing for {info.school} — {info.program}"
+        )
+
+    school_dir = _resolve_school_dir(info.school)
     school_dir.mkdir(parents=True, exist_ok=True)
-    out_path = school_dir / f"{_slugify(info.program)}.md"
+    out_path = school_dir / f"{_safe(info.program)}.md"
 
     lr = info.language_requirements
     waiver = (
@@ -59,6 +93,9 @@ def save_program_md(
         "---",
         "",
         f"# {info.school} — {info.program}",
+        "",
+        f"> Source: <{info.url}>  ",
+        f"> Updated: {date.today()}",
         "",
         "## Application Deadline",
         "",
@@ -103,17 +140,17 @@ def save_program_md(
                 label = "SOP" if ex.type == "SOP" else "Personal Statement"
                 lines += [
                     f"### {label}",
-                    f"**Source:** {ex.source_url}",
+                    f"**Source:** <{ex.source_url}>",
                     "",
                     ex.content_summary,
                     "",
                 ]
 
         if stats:
-            lines += ["## Admission Statistics", ""]
+            lines += ["", "## Admission Statistics", ""]
             for ex in stats:
                 lines += [
-                    f"### Source: {ex.source_url}",
+                    f"### Source: <{ex.source_url}>",
                     "",
                     ex.content_summary,
                     "",

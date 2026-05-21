@@ -96,6 +96,11 @@ _SYSTEM = textwrap.dedent("""\
     3. Call fetch_application_examples for essay and stats context.
     4. Present a complete answer using the format below.
 
+    IMPORTANT — school names: always pass the full official institution name
+    (e.g. "Hong Kong University of Science and Technology", never "HKUST").
+    If the user gives an abbreviation, resolve it to the full name before
+    calling any tool.
+
     ─── REQUIRED RESPONSE FORMAT ───────────────────────────────────────────
     Every response about a specific program MUST contain all of these sections.
     Write "Not available" for any field genuinely absent after searching.
