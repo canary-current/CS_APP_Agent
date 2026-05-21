@@ -14,6 +14,8 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
+import status
+
 _search_fallback_warned = False
 _extract_fallback_warned = False
 
@@ -36,7 +38,7 @@ def search(
         return _tavily_search(query, max_results, include_domains)
     except Exception as exc:
         if not _search_fallback_warned:
-            print(f"  [web] Tavily search unavailable ({exc.__class__.__name__}), using DuckDuckGo")
+            status.emit(f"  \033[33m[web] Tavily search unavailable ({exc.__class__.__name__}); using DuckDuckGo fallback\033[0m")
             _search_fallback_warned = True
         return _ddg_search(query, max_results, include_domains)
 
@@ -106,7 +108,7 @@ def extract(url: str) -> str | None:
         return _tavily_extract(url)
     except Exception as exc:
         if not _extract_fallback_warned:
-            print(f"  [web] Tavily extract unavailable ({exc.__class__.__name__}), fetching directly")
+            status.emit(f"  \033[33m[web] Tavily extract unavailable ({exc.__class__.__name__}); fetching pages directly\033[0m")
             _extract_fallback_warned = True
         return _bs_extract(url)
 

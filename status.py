@@ -71,8 +71,14 @@ def _truncate(s: str, max_cols: int) -> str:
 
 
 def _erase_block() -> None:
-    """Cursor up 2 physical rows, clear to end of screen. Caller flushes."""
-    sys.stdout.write(f"{_CSI}2A\r{_CSI}0J")
+    """
+    Cursor is one row below the bottom of the block. Walk up two rows,
+    clearing each line explicitly. More reliable than \\033[0J which has
+    inconsistent semantics across terminals when the cursor sits at the
+    bottom of the screen and a scroll is implied.
+    """
+    sys.stdout.write(f"{_CSI}1A\r{_CSI}2K")
+    sys.stdout.write(f"{_CSI}1A\r{_CSI}2K")
 
 
 def _draw_block() -> None:
