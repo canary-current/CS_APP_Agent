@@ -144,7 +144,7 @@ _SYSTEM = textwrap.dedent("""\
 # ---------------------------------------------------------------------------
 
 def _render_progress(info: ProgramInfo) -> None:
-    """Render the field-completeness bar to the persistent status line."""
+    """Render the field-completeness bar on the bottom status line."""
     total = len(checker.REQUIRED)
     missing_shorts: list[str] = []
     bar = ""
@@ -160,7 +160,21 @@ def _render_progress(info: ProgramInfo) -> None:
         suffix = "  missing: " + " · ".join(missing_shorts)
     else:
         suffix = "  \033[32mall fields found\033[0m"
-    status.render(f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}")
+    status.render(bottom=f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}")
+
+
+def _tool_status_top(name: str, args: dict) -> str:
+    """One-line description of the current tool call for the top status row."""
+    if name == "search_program":
+        target = f"{args.get('school', '')} — {args.get('program', '')}"
+        return f" \033[36m▸\033[0m  Searching: {target}"
+    if name == "collect_program_info":
+        url = status.shorten_url(args.get("url", ""))
+        return f" \033[36m▸\033[0m  Reading:   {url}"
+    if name == "fetch_application_examples":
+        target = f"{args.get('school', '')} — {args.get('program', '')}"
+        return f" \033[36m▸\033[0m  Examples:  {target}"
+    return f" \033[36m▸\033[0m  Running:   {name}"
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +197,7 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
 
         if tool_calls is not None:
             for tc in tool_calls:
-                label = _tool_label(tc['name'], tc['args'])
-                print(f"\n  \033[36m⚙ {label}\033[0m", flush=True)
-                status.render(f" \033[36m●\033[0m  Running: {label}")
+                status.render(top=_tool_status_top(tc["name"], tc["args"]))
                 result_str = _dispatch(tc["name"], tc["args"])
                 messages.append({
                     "role": "tool",
@@ -400,7 +412,10 @@ def main() -> None:
     print(f"  Provider: {llm.provider_label()}\n")
 
     status.enable()
-    status.render(" \033[36m●\033[0m  Ready — ask about any CS program")
+    status.render(
+        top=" \033[36m▸\033[0m  Idle",
+        bottom=" \033[36m●\033[0m  Ready — ask about any CS program",
+    )
 
     while True:
         try:
@@ -427,13 +442,19 @@ def main() -> None:
             continue
 
         print()
-        status.render(" \033[36m●\033[0m  Searching…")
+        status.render(
+            top=" \033[36m▸\033[0m  Starting…",
+            bottom=" \033[36m●\033[0m  Searching…",
+        )
         turn_start = len(messages)
         try:
             reply = _run_turn(messages, user_input)
         except Exception as exc:
             print(f"\033[31mError: {exc}\033[0m")
-            status.render(" \033[31m●\033[0m  Error — ready for next query")
+            status.render(
+                top=" \033[31m▸\033[0m  —",
+                bottom=" \033[31m●\033[0m  Error — ready for next query",
+            )
             continue
 
         try:
@@ -449,7 +470,10 @@ def main() -> None:
         except Exception as exc:
             print(f"\033[33m⚠ Export error: {exc}\033[0m")
 
-        status.render(" \033[36m●\033[0m  Ready — ask about another program")
+        status.render(
+            top=" \033[36m▸\033[0m  Idle",
+            bottom=" \033[36m●\033[0m  Ready — ask about another program",
+        )
 
 
 if __name__ == "__main__":
