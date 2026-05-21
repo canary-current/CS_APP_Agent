@@ -157,11 +157,13 @@ def _save_now(info: ProgramInfo, examples: list[ApplicationExample] | None = Non
     try:
         path = save_program_md(info, _turn_examples.get(key, []))
     except Exception as exc:
-        print(f"\n  \033[33m⚠ Save error for {info.school} — {info.program}: {exc}\033[0m",
+        status.seal()
+        print(f"  \033[33m⚠ Save error for {info.school} — {info.program}: {exc}\033[0m",
               flush=True)
         return
     rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
-    print(f"\n  \033[32m📄 Saved → {rel}\033[0m", flush=True)
+    status.seal()
+    print(f"  \033[32m📄 Saved → {rel}\033[0m", flush=True)
 
 
 # Turn-scoped accumulators reset at the start of each REPL turn.
@@ -243,7 +245,8 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
                             _render_progress(info)
                             _save_now(info)
                     except Exception as exc:
-                        print(f"\n  \033[33m⚠ Save skipped: {exc}\033[0m", flush=True)
+                        status.seal()
+                        print(f"  \033[33m⚠ Save skipped: {exc}\033[0m", flush=True)
 
                 elif tc["name"] == "fetch_application_examples":
                     try:
@@ -262,7 +265,8 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
         else:
             return text or ""
 
-    print(f"\n  \033[33m⚠ Reached max tool iterations ({_MAX_TOOL_ITERATIONS}); "
+    status.seal()
+    print(f"  \033[33m⚠ Reached max tool iterations ({_MAX_TOOL_ITERATIONS}); "
           f"forcing the model to produce a final answer.\033[0m", flush=True)
     messages.append({
         "role": "user",
@@ -410,15 +414,13 @@ def main() -> None:
     print(f"  Provider: {llm.provider_label()}\n")
 
     status.enable()
-    status.render(
-        top=" \033[36m▸\033[0m  Idle",
-        bottom=" \033[36m●\033[0m  Ready — ask about any CS program",
-    )
 
     while True:
+        status.seal()
         try:
             user_input = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
+            status.disable()
             print("\nBye!")
             sys.exit(0)
 
@@ -449,29 +451,23 @@ def main() -> None:
         try:
             reply = _run_turn(messages, user_input)
         except Exception as exc:
+            status.seal()
             print(f"\033[31mError: {exc}\033[0m")
-            status.render(
-                top=" \033[31m▸\033[0m  —",
-                bottom=" \033[31m●\033[0m  Error — ready for next query",
-            )
             continue
 
         try:
             followup = _completeness_followup(messages, turn_start)
         except Exception as exc:
+            status.seal()
             print(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
             followup = None
 
+        status.seal()
         print(f"\nAgent:\n{followup if followup else reply}\n")
 
         if not _turn_infos:
             print("  \033[33mℹ No program data collected this turn — "
                   "nothing to save.\033[0m", flush=True)
-
-        status.render(
-            top=" \033[36m▸\033[0m  Idle",
-            bottom=" \033[36m●\033[0m  Ready — ask about another program",
-        )
 
 
 if __name__ == "__main__":
