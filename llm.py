@@ -15,6 +15,7 @@ Per-provider overrides (all optional):
 from __future__ import annotations
 import json
 import os
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -178,7 +179,87 @@ def _anthropic_complete(system: str, user: str, max_tokens: int, api_key: str, m
     # Some stop_reasons (refusal, max_tokens with no text emitted) return an
     # empty content list — guard against IndexError.
     text = "".join(b.text for b in msg.content if hasattr(b, "text"))
+    return _sanitize_text(text.strip())
+
+
+# ---------------------------------------------------------------------------
+# Tool-markup sanitizer
+# ---------------------------------------------------------------------------
+# When a tool-trained model is asked for a text-only response, it sometimes
+# leaks its internal tool-call syntax as raw text. Strip the patterns we have
+# seen in the wild so they never reach the user or the saved .md file.
+
+_TOOL_MARKUP_PATTERNS = [
+    # DeepSeek "DSML" — strip the whole tool_calls block first (open to close,
+    # which captures the nested invoke/parameter tags inside).
+    re.compile(r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", re.DOTALL),
+    re.compile(r"<｜｜DSML｜｜tool_call>.*?</｜｜DSML｜｜tool_call>", re.DOTALL),
+    # Any remaining stray DSML tags (open, close, or self-closing).
+    re.compile(r"<\s*/?\s*｜｜DSML｜｜[^>]*>", re.DOTALL),
+    # DeepSeek-R1 begin/end delimiters
+    re.compile(r"<｜｜tool[▁_]calls?[▁_]begin｜｜>.*?<｜｜tool[▁_]calls?[▁_]end｜｜>", re.DOTALL),
+    re.compile(r"<｜｜tool[▁_]calls?[▁_](?:begin|end)｜｜>", re.DOTALL),
+    # Generic XML-ish wrappers some models emit
+    re.compile(r"<tool_calls?>.*?</tool_calls?>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<function_calls?>.*?</function_calls?>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<\s*/?\s*(?:tool|function)_calls?[^>]*>", re.IGNORECASE),
+]
+
+# Collapse the blank lines left behind after stripping markup.
+_BLANK_RUNS = re.compile(r"\n[ \t]*\n[ \t]*(?:\n[ \t]*)+")
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip known tool-call markup that some models leak into text responses."""
+    for pattern in _TOOL_MARKUP_PATTERNS:
+        text = pattern.sub("", text)
+    text = _BLANK_RUNS.sub("\n\n", text)
     return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# chat() — multi-turn plain-text call (no tools available)
+# ---------------------------------------------------------------------------
+
+def chat(messages: list[dict], *, max_tokens: int = 4096) -> str:
+    """
+    Send the message history to the LLM with NO tools available and return
+    plain text. Use this for the forced-final-answer call after the tool
+    budget is exhausted: passing tools=[] to chat_with_tools sometimes makes
+    tool-trained models emit raw tool-call markup as text — this path
+    removes the temptation entirely.
+    """
+    cfg = _resolve_config()
+    key = _get_api_key(cfg)
+    if cfg["type"] == "anthropic":
+        return _anthropic_chat(messages, max_tokens, key, cfg["model"])
+    return _openai_chat(messages, max_tokens, key, cfg)
+
+
+def _openai_chat(messages: list[dict], max_tokens: int, api_key: str, cfg: dict) -> str:
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key, base_url=cfg.get("url") or None)
+    resp = client.chat.completions.create(
+        model=cfg["model"],
+        messages=messages,
+        max_tokens=max_tokens,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    return _sanitize_text(text)
+
+
+def _anthropic_chat(messages: list[dict], max_tokens: int, api_key: str, model: str) -> str:
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+    system, anthropic_messages = _to_anthropic_messages(messages)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=anthropic_messages,
+    )
+    text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+    return _sanitize_text(text.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -270,10 +351,11 @@ def _openai_chat_with_tools(
         ]
         return None, tool_calls, assistant_msg
 
-    assistant_msg = {"role": "assistant", "content": msg.content or ""}
+    clean = _sanitize_text(msg.content or "")
+    assistant_msg = {"role": "assistant", "content": clean}
     if getattr(msg, "reasoning_content", None):
         assistant_msg["reasoning_content"] = msg.reasoning_content
-    return (msg.content or ""), None, assistant_msg
+    return clean, None, assistant_msg
 
 
 # --- Anthropic message format conversion ------------------------------------
@@ -406,5 +488,5 @@ def _anthropic_chat_with_tools(
         }
         return None, tool_calls, assistant_msg
 
-    text = "".join(b.text for b in response.content if hasattr(b, "text"))
-    return text.strip() or "", None, {"role": "assistant", "content": text.strip() or ""}
+    text = _sanitize_text("".join(b.text for b in response.content if hasattr(b, "text")))
+    return text, None, {"role": "assistant", "content": text}

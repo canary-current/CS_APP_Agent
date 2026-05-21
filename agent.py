@@ -304,12 +304,15 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
     messages.append({
         "role": "user",
         "content": (
-            f"You have used the tool budget for this turn. Stop calling tools and "
-            f"provide the best final answer you can with the data already collected."
+            "You have exhausted the tool budget for this turn. You MUST NOT "
+            "call any tools or emit any tool-call syntax. Respond with the "
+            "final answer as plain markdown text only, following the required "
+            "response format. For any required field you could not find, "
+            "write \"Not available\"."
         ),
     })
-    text, _, assistant_msg = llm.chat_with_tools(messages, tools=[])
-    messages.append(assistant_msg)
+    text = llm.chat(messages)
+    messages.append({"role": "assistant", "content": text})
     return text or ""
 
 
