@@ -5,61 +5,85 @@ An AI agent that researches CS graduate programs on your behalf. Give it a schoo
 ## Demo
 
 ```
-You: Tell me about the PhD CS program at CMU — deadlines, language requirements, and funding.
+You: Tell me about the funded MS CS program at UIUC.
 
-  ⚙ search  Carnegie Mellon University — PhD Computer Science
-  ⚙ collect https://admissions.scs.cmu.edu/portal/apply_gr
-  ⚙ examples Carnegie Mellon University — PhD Computer Science
+  ⚙ search  University of Illinois Urbana-Champaign — MS Computer Science
+  ⚙ collect https://cs.illinois.edu/admissions/graduate/applications
+  ⚙ examples University of Illinois Urbana-Champaign — MS Computer Science
 
-Agent: Here's a comprehensive summary of the PhD in Computer Science at Carnegie Mellon University.
+  ⚠ Completeness check: 3 required field(s) missing — auto-searching…
+  ⚙ collect https://cs.illinois.edu/admissions/graduate/requirements
 
-## Deadlines
-Applications for Fall 2026 open Summer 2025. Historically the deadline falls in late
-October / early November of the prior year.
+Agent (after completeness check):
 
-## Language Requirements
-No waivers for non-native speakers. TOEFL ITP Plus for China is not accepted;
-mainland China applicants are strongly encouraged to take the IELTS instead.
+## University of Illinois Urbana-Champaign — MS Computer Science
 
-## Funding
-All admitted PhD students receive a stipend, full tuition, university fees, and
-health insurance — for both domestic and international students.
-...
+### Deadline
+December 15
+
+### Language Requirements
+- TOEFL minimum: 102
+- IELTS minimum: 7.0
+- English-institution waiver: Yes — applicants from accredited English-taught
+  institutions may be exempt. Contact the department to confirm eligibility.
+- Notes: Speaking sub-score of 24+ required for TA eligibility.
+
+### Funding
+MS with Thesis students are eligible for Research Assistantships (RA) and
+Teaching Assistantships (TA), which typically cover full tuition and provide
+a monthly stipend (~$2,000–$2,500). Fellowships are available but competitive.
+The Professional MCS track is self-funded.
+
+### Program Length
+1.5–2 years (thesis track)
+
+### Courses
+Not listed on official page
+
+### Application Examples & Admission Stats
+Acceptance rate ~22%. Admitted students typically have strong academic records.
+SOP tip: name specific faculty whose research aligns with yours.
 ```
 
 ## Architecture
 
-The agent is a thin orchestration loop around three stateless tools:
-
 ```
 User prompt
-  └── DeepSeek-V3 (orchestrator, tool-calling)
+  └── DeepSeek-V3 (orchestrator, tool-calling loop)
         ├── search_program(school, program, region?)
-        │     Tavily search → ranked by URL quality → returns best .edu page
+        │     web.search() → URL quality ranking → best .edu/.ac. page
         ├── collect_program_info(url, school, program)
-        │     Tavily extract → LLM extraction → auto-retry on sparse results → JSON cache
+        │     web.extract() → LLM extraction → sparse-result retry → JSON cache
         └── fetch_application_examples(school, program)
-              Tavily search (essays + stats) → LLM summarisation → JSON cache
+              web.search() → web.extract() per page → LLM summarisation → JSON cache
+
+  After every turn ──► checker.py validates the ProgramInfo struct
+                        Missing fields? → auto follow-up turn (once)
 ```
 
 **Key design decisions**
 
 - **Stateless tools** — each tool is a pure function; the LLM holds all conversation state.
+- **Provider-agnostic web layer** (`tools/web.py`) — all network calls go through a single module. Tavily is tried first; DuckDuckGo (no key) and requests+BeautifulSoup are automatic fallbacks.
 - **Provider-agnostic LLM layer** (`llm.py`) — swap between DeepSeek and Anthropic Claude by changing one env var.
-- **Auto-retry on sparse pages** — if `collect_program_info` finds a page with no deadline or language scores, it searches the same domain for a richer requirements page and merges the results.
+- **Deterministic completeness checker** (`checker.py`) — after every turn, required fields are validated against the raw `ProgramInfo` struct. Missing fields trigger one automatic follow-up search, independent of the LLM's phrasing choices.
+- **Fixed response format** — the system prompt enforces seven named sections in every program answer so responses are structurally consistent.
+- **Auto-retry on sparse pages** — if `collect_program_info` lands on a shallow page, it searches the same domain for a richer requirements page and merges both extractions.
 - **Local JSON cache** (`cache/`) — repeat lookups never re-fetch. Delete the folder to force a refresh.
 
 ## File Layout
 
 ```
-agent.py          Main entry point — REPL that drives the tool-calling loop
-llm.py            Provider abstraction (DeepSeek / Anthropic)
+agent.py          REPL — drives the tool-calling loop and completeness check
+checker.py        Deterministic completeness validator for ProgramInfo
+llm.py            LLM abstraction (DeepSeek / Anthropic)
 models.py         Pydantic models: SearchResult, ProgramInfo, ApplicationExample
-config.py         Env var loading with early failure on missing keys
+config.py         Env var loading; TAVILY_API_KEY is optional
 tools/
-  search.py       search_program — Tavily search with URL quality ranking
-  collect.py      collect_program_info — page extraction with sparse-result retry
-  examples.py     fetch_application_examples — SOP + admission stats finder
+  web.py          Unified search + extract interface with automatic fallback
+  search.py       search_program — URL quality ranking
+  collect.py      collect_program_info — extraction with sparse-result retry
+  examples.py     fetch_application_examples — SOP + admission stats
   cache.py        JSON cache keyed by SHA-256 of the lookup key
 requirements.txt
 .env.example
@@ -70,7 +94,7 @@ requirements.txt
 **1. Clone and create the conda environment**
 
 ```bash
-git clone https://github.com/canary_cuurent/CS_APP_Agent.git
+git clone https://github.com/canary-current/CS_APP_Agent.git
 cd CS_APP_Agent
 conda create -n cs_app_agent python=3.11 -y
 conda activate cs_app_agent
@@ -86,8 +110,8 @@ cp .env.example .env
 Edit `.env`:
 
 ```ini
-DEEPSEEK_API_KEY=sk-...        # required — get one at platform.deepseek.com
-TAVILY_API_KEY=tvly-...        # required — free tier at tavily.com (1 000 credits/month)
+DEEPSEEK_API_KEY=sk-...        # required — platform.deepseek.com
+TAVILY_API_KEY=tvly-...        # optional — tavily.com (free tier: 1 000 credits/month)
 ANTHROPIC_API_KEY=sk-ant-...   # optional — only needed if LLM_PROVIDER=anthropic
 LLM_PROVIDER=deepseek          # "deepseek" (default) or "anthropic"
 ```
@@ -100,29 +124,69 @@ python agent.py
 
 ## API Keys
 
-| Key | Where to get it | Free tier |
+| Key | Where to get it | Required? |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) | $5 credit on sign-up |
-| `TAVILY_API_KEY` | [tavily.com](https://tavily.com) | 1 000 credits / month |
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) | Optional |
+| `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) | Yes |
+| `TAVILY_API_KEY` | [tavily.com](https://tavily.com) | No — DuckDuckGo used as fallback |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) | No — only if `LLM_PROVIDER=anthropic` |
+
+## Web Search Fallback
+
+All web calls go through `tools/web.py`, which tries providers in order:
+
+| Operation | Primary | Fallback |
+|---|---|---|
+| Search | Tavily (advanced, includes content) | DuckDuckGo via `ddgs` (no key needed) |
+| Page extraction | Tavily extract (handles JS pages) | `requests` + BeautifulSoup |
+
+The fallback activates automatically on any failure — missing key, quota exceeded, rate limit, or network error. The agent continues without interruption.
+
+## Completeness Checker
+
+After every user turn, `checker.py` inspects the raw `ProgramInfo` struct returned by `collect_program_info` and verifies that all six required fields are present:
+
+| Field | Checked condition |
+|---|---|
+| Application deadline | not `None` |
+| TOEFL minimum score | not `None` |
+| IELTS minimum score | not `None` |
+| English-institution waiver | not `None` (distinguished from explicit `False`) |
+| Funding details | non-empty |
+| Program length | not `None` |
+
+If any are missing, the agent automatically fires one follow-up turn that names the exact absent fields and restricts the search to the official domain. This runs once per user query — no infinite loops.
+
+## Response Format
+
+The system prompt enforces a fixed seven-section structure for every program response:
+
+```
+## [School] — [Program]
+### Deadline
+### Language Requirements
+### Funding
+### Program Length
+### Courses
+### Application Examples & Admission Stats
+```
+
+Fields that genuinely cannot be found are stated as "Not available" rather than silently omitted.
 
 ## Switching LLM Provider
 
-Set `LLM_PROVIDER` in `.env`:
-
 ```ini
-LLM_PROVIDER=anthropic   # uses claude-haiku-4-5 for tool extraction
-LLM_PROVIDER=deepseek    # uses deepseek-chat (DeepSeek-V3) — default
+LLM_PROVIDER=deepseek    # DeepSeek-V3 via OpenAI-compatible API (default)
+LLM_PROVIDER=anthropic   # Claude Haiku via Anthropic SDK
 ```
 
-The orchestrator (agent loop) always uses DeepSeek regardless of `LLM_PROVIDER` — only the internal extraction calls inside `collect_program_info` and `fetch_application_examples` respect this setting.
+The agent's tool-calling loop always uses DeepSeek. `LLM_PROVIDER` controls only the internal extraction calls inside `collect_program_info` and `fetch_application_examples`.
 
 ## Caching
 
-Fetched pages and LLM extractions are cached in `cache/` as JSON files keyed by a SHA-256 hash of the URL or lookup key. This means:
+Results are cached in `cache/` as JSON files keyed by a SHA-256 hash of the URL or lookup key.
 
 - Repeat queries for the same program are instant and free.
-- To force a re-fetch (e.g., after a deadline update), delete `cache/` or the specific file.
+- To force a live re-fetch (e.g. after a deadline changes), delete `cache/` or the specific file.
 
 ## Dependencies
 
@@ -130,7 +194,8 @@ Fetched pages and LLM extractions are cached in `cache/` as JSON files keyed by 
 |---|---|
 | `openai` | DeepSeek API (OpenAI-compatible) + agent tool-calling loop |
 | `anthropic` | Optional Claude backend |
-| `tavily-python` | Web search and page extraction |
+| `tavily-python` | Primary web search and page extraction |
+| `ddgs` | DuckDuckGo search fallback (no API key required) |
+| `requests` + `beautifulsoup4` | Page extraction fallback |
 | `pydantic` | Structured data models with validation |
 | `python-dotenv` | `.env` loading |
-| `beautifulsoup4` | HTML parsing (available for custom scraping extensions) |
