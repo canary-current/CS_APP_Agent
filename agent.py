@@ -168,18 +168,24 @@ def _save_now(info: ProgramInfo, examples: list[ApplicationExample] | None = Non
     except Exception as exc:
         status.emit(f"  \033[33m⚠ Save error for {info.school} — {info.program}: {exc}\033[0m")
         return
-    rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
-    status.emit(f"  \033[32m📄 Saved → {rel}\033[0m")
+    # Announce the file only the first time this turn — silent re-saves
+    # happen when later collect/examples calls add more data.
+    if key not in _turn_announced:
+        _turn_announced.add(key)
+        rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
+        status.emit(f"  \033[32m📄 Saved → {rel}\033[0m")
 
 
 # Turn-scoped accumulators reset at the start of each REPL turn.
 _turn_infos: dict[tuple, ProgramInfo] = {}
 _turn_examples: dict[tuple, list[ApplicationExample]] = {}
+_turn_announced: set[tuple] = set()
 
 
 def _reset_turn_state() -> None:
     _turn_infos.clear()
     _turn_examples.clear()
+    _turn_announced.clear()
 
 
 def _render_progress(info: ProgramInfo) -> None:

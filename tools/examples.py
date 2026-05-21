@@ -22,6 +22,7 @@ from models import ApplicationExample
 from tools.cache import get_cached, set_cached
 from tools.web import search as web_search, extract as web_extract
 import llm
+import status
 
 _TARGET_PER_TYPE  = 3   # stop once this many valid summaries are collected
 _FETCH_CANDIDATES = 6   # fetch up to this many pages (more needed with DDG fallback)
@@ -145,7 +146,7 @@ def fetch_application_examples(
         if sum(1 for e in examples if e.type in ("SOP", "personal_statement")) >= _TARGET_PER_TYPE:
             break
         url = result["url"]
-        print(f"  [examples] fetching essay page: {url}")
+        status.set(top=f" \033[36m▸\033[0m  Reading:   {status.shorten_url(url)}")
         summary_data = _summarise_page(url, _ESSAY_PROMPT)
         if not summary_data:
             continue
@@ -173,7 +174,7 @@ def fetch_application_examples(
         if stats_count >= _TARGET_PER_TYPE:
             break
         url = result["url"]
-        print(f"  [examples] fetching stats page: {url}")
+        status.set(top=f" \033[36m▸\033[0m  Reading:   {status.shorten_url(url)}")
         summary_data = _summarise_page(url, _STATS_PROMPT)
         if not summary_data:
             continue

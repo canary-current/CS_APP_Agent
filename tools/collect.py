@@ -21,6 +21,7 @@ from tools.cache import get_cached, set_cached
 from tools.web import search as web_search, extract as web_extract
 from checker import CRITICAL_RAW_FIELDS
 import llm
+import status
 
 _SYSTEM = (
     "You are a precise information extractor. "
@@ -148,7 +149,7 @@ def collect_program_info(url: str, school: str, program: str) -> ProgramInfo:
 
     # --- 2. Retry on sparse results ---
     if _is_sparse(data):
-        print(f"  [collect] sparse result — searching {urlparse(url).netloc} for a better page…")
+        status.set(top=f" \033[36m▸\033[0m  Searching {urlparse(url).netloc} for a better page…")
         extra = _retry_search(school, program, url)
         if extra:
             data = _merge(data, extra)
