@@ -1,23 +1,30 @@
 """
 A two-line live status block that floats at the visible bottom of output.
 
-Use set() to update one or both lines — the block redraws in place.
-Use emit() to print permanent content above the block; the block is
-erased, the content prints, then the block re-renders below it.
-Use hide() before input() so the prompt appears on a clean line; the
-next set() will re-render the block below the user's typed input.
+set(top=, bottom=)   update one or both lines; the block redraws in place
+hide()               erase the block; next set() will redraw it
+emit(text)           print text above the block, then redraw the block
+shorten_url(url)     middle-ellipsis truncation for long URLs
 
-Uses only relative cursor movement (\\033[2A) and clear-to-end-of-screen
-(\\033[0J) — both reliably supported on every VT100-compatible terminal,
-including macOS Terminal.app, iTerm2, Linux gnome-terminal, etc.
+Each rendered line is hard-truncated to terminal width so that the
+in-place redraw (cursor move up exactly two physical rows) is reliable.
+Wrapping is what makes "in-place" stop working — once any status line
+wraps to a second row, the cursor calculation is off and old content
+gets stranded in scrollback.
 
+Only relative cursor moves and line clears are used (\\033[2A,
+\\033[0J, \\033[2K) — supported on every VT100-compatible terminal.
 Falls back to plain print() when stdout is not a TTY.
 """
 
 from __future__ import annotations
+import re
+import shutil
 import sys
 
 _CSI = "\033["
+_ANSI = re.compile(r"\033\[[0-9;]*m")
+
 _top = ""
 _bottom = ""
 _visible = False
@@ -30,14 +37,50 @@ def _is_tty() -> bool:
         return False
 
 
+def _term_cols() -> int:
+    return shutil.get_terminal_size((80, 24)).columns
+
+
+def _visible_len(s: str) -> int:
+    """Length of s ignoring ANSI colour escape sequences."""
+    return len(_ANSI.sub("", s))
+
+
+def _truncate(s: str, max_cols: int) -> str:
+    """Truncate to max_cols visible characters, keeping ANSI codes intact."""
+    if _visible_len(s) <= max_cols:
+        return s
+    out: list[str] = []
+    seen = 0
+    i = 0
+    n = len(s)
+    limit = max(1, max_cols - 1)  # leave room for the ellipsis
+    while i < n:
+        m = _ANSI.match(s, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            continue
+        if seen >= limit:
+            break
+        out.append(s[i])
+        seen += 1
+        i += 1
+    out.append("…\033[0m")
+    return "".join(out)
+
+
 def _erase_block() -> None:
-    """Move cursor up 2 lines and clear to end of screen. Caller flushes."""
+    """Cursor up 2 physical rows, clear to end of screen. Caller flushes."""
     sys.stdout.write(f"{_CSI}2A\r{_CSI}0J")
 
 
 def _draw_block() -> None:
-    """Write the two status lines starting at the current cursor position."""
-    sys.stdout.write(f"{_top}\n{_bottom}\n")
+    """Write the two truncated status lines from the current cursor position."""
+    cols = _term_cols() - 1
+    top_line = _truncate(_top, cols) if _top else ""
+    bot_line = _truncate(_bottom, cols) if _bottom else ""
+    sys.stdout.write(f"{top_line}\n{bot_line}\n")
 
 
 def set(*, top: str | None = None, bottom: str | None = None) -> None:
@@ -63,7 +106,7 @@ def set(*, top: str | None = None, bottom: str | None = None) -> None:
 
 
 def hide() -> None:
-    """Erase the block; the next set() or show() will redraw it."""
+    """Erase the block; next set() or show() will redraw it."""
     global _visible
     if not _visible or not _is_tty():
         return
@@ -85,8 +128,8 @@ def show() -> None:
 
 def emit(text: str = "") -> None:
     """
-    Print a message above the floating status block. The block is erased,
-    the text prints (may be multi-line), then the block re-renders below.
+    Print text above the floating status block (multi-line text supported).
+    The block is erased, the text prints, then the block redraws below it.
     """
     global _visible
     if not _is_tty():
@@ -106,12 +149,10 @@ def emit(text: str = "") -> None:
 
 
 def enable() -> None:
-    """Reserved for setup parity with previous API. Currently a no-op."""
     pass
 
 
 def disable() -> None:
-    """Hide the block cleanly on exit."""
     hide()
 
 

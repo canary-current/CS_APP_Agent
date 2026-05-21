@@ -460,10 +460,9 @@ def main() -> None:
             status.emit("  \033[33mℹ No program data collected this turn — "
                         "nothing to save.\033[0m")
 
-        status.set(
-            top=" \033[36m▸\033[0m  Idle",
-            bottom=" \033[36m●\033[0m  Ready — ask about another program",
-        )
+        # Hide the status block between turns — the next "You:" prompt
+        # sits on a clean line at the visible bottom.
+        status.hide()
 
 
 if __name__ == "__main__":
