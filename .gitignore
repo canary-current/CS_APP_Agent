@@ -5,6 +5,9 @@
 # Cache
 cache/
 
+# Agent output
+schools/
+
 # Python
 __pycache__/
 *.py[cod]
