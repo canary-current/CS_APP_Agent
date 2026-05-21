@@ -314,6 +314,15 @@ def main() -> None:
     messages: list[dict] = [{"role": "system", "content": _SYSTEM}]
 
     print(_BANNER)
+
+    ok, hint = llm.validate_config()
+    if not ok:
+        print(f"\033[31m  Configuration error\033[0m\n")
+        for line in hint.splitlines():
+            print(f"  {line}")
+        print(f"\n  Copy .env.example → .env and fill in the key, then re-run.\n")
+        sys.exit(1)
+
     print(f"  Provider: {llm.provider_label()}\n")
 
     while True:

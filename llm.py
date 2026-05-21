@@ -78,6 +78,41 @@ def provider_label() -> str:
     return f"{provider} / {cfg.get('model', 'unknown')}"
 
 
+def validate_config() -> tuple[bool, str]:
+    """
+    Check that the active provider has an API key configured.
+
+    Returns:
+        (True, "")              — config is valid, ready to go.
+        (False, hint_message)   — key missing; hint tells the user what to set.
+    """
+    cfg = _resolve_config()
+    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+    is_local = cfg.get("url", "").startswith("http://localhost")
+
+    key = os.getenv(cfg.get("key_env", "")) or os.getenv("LLM_API_KEY") or ""
+    if key or is_local:
+        return True, ""
+
+    key_env = cfg.get("key_env", "LLM_API_KEY")
+    lines = [
+        f"No API key found for provider '{provider}'.",
+        f"Add the following to your .env file:",
+        f"",
+        f"  LLM_PROVIDER={provider}",
+        f"  {key_env}=<your-key>",
+    ]
+    if provider not in _PRESETS:
+        lines += [
+            f"",
+            f"Or set a custom endpoint:",
+            f"  LLM_BASE_URL=<your-base-url>",
+            f"  LLM_API_KEY=<your-key>",
+            f"  LLM_MODEL=<model-name>",
+        ]
+    return False, "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # complete() — single-turn extraction calls (no tool use)
 # ---------------------------------------------------------------------------
