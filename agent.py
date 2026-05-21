@@ -91,11 +91,20 @@ _SYSTEM = textwrap.dedent("""\
     • collect_program_info       — extract structured program details
     • fetch_application_examples — find real SOPs, personal statements, admission stats
 
-    Workflow:
+    Workflow (per program):
     1. Call search_program to get the official URL.
     2. Call collect_program_info with that URL.
     3. Call fetch_application_examples for essay and stats context.
     4. Present a complete answer using the format below.
+
+    IMPORTANT — one program at a time:
+    • If the user asks about multiple programs (e.g. "MIT and Stanford CS PhD"),
+      research them STRICTLY SEQUENTIALLY. Complete steps 1–4 for the first
+      program — including the final written answer — BEFORE issuing any tool
+      call for the next program.
+    • Never interleave tool calls for different (school, program) pairs.
+    • Emit exactly one tool call per response; wait for its result before
+      deciding the next step.
 
     IMPORTANT — school and program names:
     • Always pass the full official institution name (e.g. "Hong Kong University

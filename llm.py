@@ -220,13 +220,23 @@ def _openai_chat_with_tools(
 ) -> tuple[str | None, list[dict] | None, dict]:
     from openai import OpenAI
     client = OpenAI(api_key=api_key, base_url=cfg.get("url") or None)
-    response = client.chat.completions.create(
+    # parallel_tool_calls=False forces the model to emit one tool call per
+    # response, so the agent processes one program (search → collect → examples)
+    # before being able to start another. Falls back gracefully if the provider
+    # doesn't support the flag.
+    create_kwargs = dict(
         model=cfg["model"],
         messages=messages,
         tools=tools,
         tool_choice="auto",
         max_tokens=max_tokens,
+        parallel_tool_calls=False,
     )
+    try:
+        response = client.chat.completions.create(**create_kwargs)
+    except TypeError:
+        create_kwargs.pop("parallel_tool_calls", None)
+        response = client.chat.completions.create(**create_kwargs)
     choice = response.choices[0]
     msg = choice.message
 
@@ -361,6 +371,7 @@ def _anthropic_chat_with_tools(
         max_tokens=max_tokens,
         system=system,
         tools=anthropic_tools,
+        tool_choice={"type": "auto", "disable_parallel_tool_use": True},
         messages=anthropic_messages,
     )
 
