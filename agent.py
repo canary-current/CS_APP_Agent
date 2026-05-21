@@ -17,9 +17,11 @@ import textwrap
 from openai import OpenAI
 
 from config import DEEPSEEK_API_KEY
+from models import ProgramInfo
 from tools.search import search_program, TOOL_SCHEMA as _SEARCH
 from tools.collect import collect_program_info, TOOL_SCHEMA as _COLLECT
 from tools.examples import fetch_application_examples, TOOL_SCHEMA as _EXAMPLES
+import checker
 
 # ---------------------------------------------------------------------------
 # Tool registry
@@ -82,18 +84,45 @@ _SYSTEM = textwrap.dedent("""\
     You are a knowledgeable assistant helping a student apply to CS graduate programs.
 
     You have three tools:
-    • search_program          — find a program's official admissions page
-    • collect_program_info    — extract deadlines, language requirements, funding, and courses
-    • fetch_application_examples — find real SOPs, personal statements, and admission statistics
+    • search_program             — find a program's official admissions page
+    • collect_program_info       — extract structured program details
+    • fetch_application_examples — find real SOPs, personal statements, admission stats
 
     Workflow:
-    1. When asked about a program, call search_program first to get the URL.
-    2. Pass that URL to collect_program_info for structured details.
-    3. Call fetch_application_examples for essay examples and admission stats.
-    4. Synthesise the results into a clear, well-organised answer.
+    1. Call search_program to get the official URL.
+    2. Call collect_program_info with that URL.
+    3. Call fetch_application_examples for essay and stats context.
+    4. Present a complete answer using the format below.
 
-    Always cite specific deadlines, score thresholds, and funding details when available.
-    If a field was not found, say so honestly rather than guessing.
+    ─── REQUIRED RESPONSE FORMAT ───────────────────────────────────────────
+    Every response about a specific program MUST contain all of these sections.
+    Write "Not available" for any field genuinely absent after searching.
+
+    ## [School] — [Program]
+
+    ### Deadline
+    <application deadline>
+
+    ### Language Requirements
+    - TOEFL minimum: <score or Not available>
+    - IELTS minimum: <score or Not available>
+    - English-institution waiver: <Yes / No / Not specified>
+    - Notes: <any extra detail, or omit>
+
+    ### Funding
+    <RA/TA availability, stipend amounts, fellowship info>
+
+    ### Program Length
+    <length in years>
+
+    ### Courses
+    <list of courses, or "Not listed on official page">
+
+    ### Application Examples & Admission Stats
+    <SOP insights, admission rate, typical GPA/GRE, tips>
+    ────────────────────────────────────────────────────────────────────────
+
+    Never omit a section. Never guess — use actual data from the tools.
 """)
 
 # ---------------------------------------------------------------------------
@@ -156,6 +185,67 @@ def _run_turn(client: OpenAI, messages: list[dict], user_input: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Completeness checker
+# ---------------------------------------------------------------------------
+
+def _collect_infos_from_turn(messages: list[dict], turn_start: int) -> list[ProgramInfo]:
+    """
+    Extract every ProgramInfo that collect_program_info returned during this turn.
+    Correlates tool_call_ids so we only look at the right tool.
+    """
+    call_id_to_name: dict[str, str] = {}
+    for msg in messages[turn_start:]:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls") or []:
+                call_id_to_name[tc["id"]] = tc["function"]["name"]
+
+    infos: list[ProgramInfo] = []
+    for msg in messages[turn_start:]:
+        if msg.get("role") == "tool":
+            if call_id_to_name.get(msg.get("tool_call_id", "")) == "collect_program_info":
+                try:
+                    data = json.loads(msg["content"])
+                    if "error" not in data:
+                        infos.append(ProgramInfo(**data))
+                except Exception:
+                    pass
+    return infos
+
+
+def _completeness_followup(
+    client: OpenAI,
+    messages: list[dict],
+    turn_start: int,
+) -> str | None:
+    """
+    Inspect every collect_program_info result from the latest turn.
+    If any required fields are missing, inject one follow-up turn automatically
+    and return its reply. Returns None if everything is complete.
+    """
+    infos = _collect_infos_from_turn(messages, turn_start)
+    if not infos:
+        return None
+
+    prompts: list[str] = []
+    total_missing = 0
+    for info in infos:
+        missing = checker.missing_fields(info)
+        if missing:
+            total_missing += len(missing)
+            prompts.append(checker.follow_up_prompt(info, missing))
+
+    if not prompts:
+        return None
+
+    print(
+        f"\n  \033[33m⚠ Completeness check: {total_missing} required field(s) missing"
+        f" — auto-searching…\033[0m",
+        flush=True,
+    )
+    return _run_turn(client, messages, "\n\n".join(prompts))
+
+
+# ---------------------------------------------------------------------------
 # REPL
 # ---------------------------------------------------------------------------
 
@@ -191,13 +281,22 @@ def main() -> None:
             sys.exit(0)
 
         print()
+        turn_start = len(messages)
         try:
             reply = _run_turn(client, messages, user_input)
         except Exception as exc:
             print(f"\033[31mError: {exc}\033[0m")
             continue
 
-        print(f"\nAgent: {reply}\n")
+        print(f"\nAgent:\n{reply}\n")
+
+        # Deterministic completeness check — one silent follow-up if needed.
+        try:
+            followup = _completeness_followup(client, messages, turn_start)
+            if followup:
+                print(f"\nAgent (after completeness check):\n{followup}\n")
+        except Exception as exc:
+            print(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ class SearchResult(BaseModel):
 class LanguageRequirements(BaseModel):
     toefl_min: int | None = None
     ielts_min: float | None = None
-    english_institution_waiver: bool = False
+    english_institution_waiver: bool | None = None  # None = not found on page
     notes: str = ""
 
 

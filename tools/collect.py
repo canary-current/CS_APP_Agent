@@ -144,7 +144,10 @@ def collect_program_info(url: str, school: str, program: str) -> ProgramInfo:
         language_requirements=LanguageRequirements(
             toefl_min=data.get("toefl_min"),
             ielts_min=data.get("ielts_min"),
-            english_institution_waiver=bool(data.get("english_waiver") or False),
+            english_institution_waiver=(
+                None if data.get("english_waiver") is None
+                else bool(data["english_waiver"])
+            ),
             notes=data.get("language_notes", ""),
         ),
         funding=data.get("funding", ""),
