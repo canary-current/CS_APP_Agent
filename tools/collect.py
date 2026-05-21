@@ -3,23 +3,23 @@ collect_program_info: scrape a program page and return structured ProgramInfo.
 
 Flow:
   1. Check local JSON cache (keyed by URL).
-  2. Fetch page text via Tavily; run LLM extraction.
+  2. Fetch page text via tools.web.extract(); run LLM extraction.
   3. If critical fields are missing (sparse result), search the same domain for
      a more targeted requirements/admissions page and merge the two extractions.
   4. Cache and return.
+
+Web calls go through tools.web which tries Tavily first and falls back to
+DuckDuckGo / requests+BeautifulSoup automatically.
 """
 
 from __future__ import annotations
 import json
 import re
 from urllib.parse import urlparse
-from tavily import TavilyClient
-from config import TAVILY_API_KEY
 from models import ProgramInfo, LanguageRequirements
 from tools.cache import get_cached, set_cached
+from tools.web import search as web_search, extract as web_extract
 import llm
-
-_tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
 _SYSTEM = (
     "You are a precise information extractor. "
@@ -48,20 +48,15 @@ _CRITICAL_FIELDS = ("deadline", "toefl_min", "ielts_min")
 
 
 def _is_sparse(data: dict) -> bool:
-    """True when none of the critical fields were found."""
     return all(data.get(f) is None for f in _CRITICAL_FIELDS)
 
 
 def _extract_from_url(url: str) -> dict | None:
-    """Fetch a URL with Tavily and run LLM extraction. Returns raw dict or None on failure."""
-    try:
-        resp = _tavily.extract(urls=[url])
-        results = resp.get("results", [])
-        if not results or not results[0].get("raw_content"):
-            return None
-        content = results[0]["raw_content"][:8000]
-    except Exception:
+    """Fetch a URL and run LLM extraction. Returns raw dict or None on failure."""
+    content = web_extract(url)
+    if not content:
         return None
+    content = content[:8000]
 
     raw = llm.complete(_SYSTEM, _PROMPT.format(content=content))
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -74,22 +69,17 @@ def _extract_from_url(url: str) -> dict | None:
 
 def _retry_search(school: str, program: str, base_url: str) -> dict | None:
     """
-    Search the original domain for a requirements/admissions page and extract it.
-    Returns a merged raw dict, or None if nothing better was found.
+    Search the original domain for a richer requirements/admissions page and
+    extract it. Returns a raw data dict, or None if nothing better was found.
     """
     domain = urlparse(base_url).netloc
     query = f"{school} {program} admissions requirements TOEFL deadline"
     try:
-        resp = _tavily.search(
-            query=query,
-            search_depth="advanced",
-            max_results=5,
-            include_domains=[domain],
-        )
+        results = web_search(query, max_results=5, include_domains=[domain])
     except Exception:
         return None
 
-    for result in resp.get("results", []):
+    for result in results:
         candidate_url = result["url"]
         if candidate_url == base_url:
             continue
@@ -105,7 +95,6 @@ def _merge(base: dict, extra: dict) -> dict:
     for key, val in extra.items():
         if not merged.get(key) and val:
             merged[key] = val
-    # Merge course lists
     merged["courses"] = list({
         c for c in (base.get("courses") or []) + (extra.get("courses") or [])
     })

@@ -11,7 +11,7 @@ def _require(key: str) -> str:
     return value
 
 
-TAVILY_API_KEY: str = _require("TAVILY_API_KEY")
+TAVILY_API_KEY: str | None = os.getenv("TAVILY_API_KEY") or None
 DEEPSEEK_API_KEY: str = _require("DEEPSEEK_API_KEY")
 
 

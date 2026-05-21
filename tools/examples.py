@@ -3,24 +3,25 @@ fetch_application_examples: find real SOPs, personal statements, and admission
 statistics for a given school + program.
 
 Strategy:
-  - Run two targeted Tavily searches (essays vs. stats).
-  - Fetch page content for the top results via Tavily extract.
+  - Run two targeted searches (essays vs. stats) via tools.web.search().
+  - Fetch page content for the top results via tools.web.extract().
   - Summarise each page with the LLM.
   - Cache the full list keyed by school + program.
 
 Unlike search_program, community sites (Reddit, GradCafe) are WELCOME here —
 they are the primary source of real admission data and essay examples.
+
+Web calls go through tools.web which tries Tavily first and falls back to
+DuckDuckGo / requests+BeautifulSoup automatically.
 """
 
 from __future__ import annotations
 import json
-from tavily import TavilyClient
-from config import TAVILY_API_KEY
+import re
 from models import ApplicationExample
 from tools.cache import get_cached, set_cached
+from tools.web import search as web_search, extract as web_extract
 import llm
-
-_tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
 _RESULTS_PER_TYPE = 3   # how many pages to fetch per search query
 
@@ -71,15 +72,9 @@ Webpage text (truncated to 6 000 chars):
 """
 
 
-def _search(query: str, preferred_domains: list[str]) -> list[dict]:
-    """Run a Tavily search; results from preferred domains float to the top."""
-    resp = _tavily.search(
-        query=query,
-        search_depth="advanced",
-        max_results=8,
-        include_answer=False,
-    )
-    results = resp.get("results", [])
+def _ranked_search(query: str, preferred_domains: list[str]) -> list[dict]:
+    """Search and float results from preferred domains to the top."""
+    results = web_search(query, max_results=8)
 
     def _rank(r: dict) -> int:
         url = r["url"].lower()
@@ -90,19 +85,12 @@ def _search(query: str, preferred_domains: list[str]) -> list[dict]:
 
 def _summarise_page(url: str, prompt_template: str) -> dict | None:
     """Fetch a page and return the LLM summary dict, or None on failure."""
-    try:
-        extract_resp = _tavily.extract(urls=[url])
-        page_results = extract_resp.get("results", [])
-        if not page_results or not page_results[0].get("raw_content"):
-            return None
-        content = page_results[0]["raw_content"][:6000]
-    except Exception:
+    content = web_extract(url)
+    if not content:
         return None
+    content = content[:6000]
 
     raw = llm.complete(_SYSTEM, prompt_template.format(content=content))
-
-    # Strip markdown fences if the LLM added them
-    import re
     raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
     raw = re.sub(r"\s*```$", "", raw)
 
@@ -137,7 +125,7 @@ def fetch_application_examples(
     essay_query = (
         f'"{school}" "{program}" statement of purpose SOP personal statement example'
     )
-    essay_results = _search(essay_query, _PREFERRED_ESSAY_DOMAINS)
+    essay_results = _ranked_search(essay_query, _PREFERRED_ESSAY_DOMAINS)
 
     for result in essay_results[:_RESULTS_PER_TYPE]:
         url = result["url"]
@@ -162,7 +150,7 @@ def fetch_application_examples(
     stats_query = (
         f'"{school}" "{program}" admission results GPA acceptance rate statistics'
     )
-    stats_results = _search(stats_query, _PREFERRED_STATS_DOMAINS)
+    stats_results = _ranked_search(stats_query, _PREFERRED_STATS_DOMAINS)
 
     for result in stats_results[:_RESULTS_PER_TYPE]:
         url = result["url"]

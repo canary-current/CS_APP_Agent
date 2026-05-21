@@ -1,18 +1,12 @@
 """
 search_program: find a graduate CS program's official admissions page.
 
-Uses Tavily search to locate the most authoritative URL for the given
-school + program combination, then returns basic metadata (title,
-description, URL) ready for the collect tool to scrape.
+Uses tools.web.search() which tries Tavily first, then DuckDuckGo as fallback.
 """
 
 from __future__ import annotations
-import re
-from tavily import TavilyClient
-from config import TAVILY_API_KEY
 from models import SearchResult
-
-_client = TavilyClient(api_key=TAVILY_API_KEY)
+from tools.web import search as web_search
 
 # Domains that are almost certainly NOT the official program page.
 _NOISE_DOMAINS = {
@@ -74,15 +68,7 @@ def search_program(
         ValueError: if no suitable result is found.
     """
     query = _build_query(school, program, region)
-
-    response = _client.search(
-        query=query,
-        search_depth="advanced",
-        max_results=10,
-        include_answer=False,
-    )
-
-    results = response.get("results", [])
+    results = web_search(query, max_results=10)
 
     # Rank: official domain first, then by URL quality score.
     official = [r for r in results if _is_official(r["url"])]
