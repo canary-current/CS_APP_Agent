@@ -16,11 +16,13 @@ import sys
 import textwrap
 from openai import OpenAI
 
+from pathlib import Path
 from config import DEEPSEEK_API_KEY
-from models import ProgramInfo
+from models import ProgramInfo, ApplicationExample
 from tools.search import search_program, TOOL_SCHEMA as _SEARCH
 from tools.collect import collect_program_info, TOOL_SCHEMA as _COLLECT
 from tools.examples import fetch_application_examples, TOOL_SCHEMA as _EXAMPLES
+from tools.export import save_program_md
 import checker
 
 # ---------------------------------------------------------------------------
@@ -246,6 +248,58 @@ def _completeness_followup(
 
 
 # ---------------------------------------------------------------------------
+# Markdown export
+# ---------------------------------------------------------------------------
+
+def _scan_tool_results(
+    messages: list[dict],
+    turn_start: int,
+) -> tuple[dict[tuple, ProgramInfo], dict[tuple, list[ApplicationExample]]]:
+    """
+    Walk messages[turn_start:] and return:
+      infos    — {(school, program): ProgramInfo}   (last collect call wins)
+      examples — {(school, program): [ApplicationExample]}
+    """
+    call_id_to_name: dict[str, str] = {}
+    for msg in messages[turn_start:]:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls") or []:
+                call_id_to_name[tc["id"]] = tc["function"]["name"]
+
+    infos: dict[tuple, ProgramInfo] = {}
+    examples: dict[tuple, list[ApplicationExample]] = {}
+
+    for msg in messages[turn_start:]:
+        if msg.get("role") != "tool":
+            continue
+        tool_name = call_id_to_name.get(msg.get("tool_call_id", ""))
+        try:
+            data = json.loads(msg["content"])
+        except Exception:
+            continue
+
+        if tool_name == "collect_program_info" and "error" not in data:
+            info = ProgramInfo(**data)
+            infos[(info.school, info.program)] = info  # later call overwrites earlier
+
+        elif tool_name == "fetch_application_examples" and isinstance(data, list):
+            for item in data:
+                ex = ApplicationExample(**item)
+                examples.setdefault((ex.school, ex.program), []).append(ex)
+
+    return infos, examples
+
+
+def _export_results(messages: list[dict], turn_start: int) -> None:
+    """Save every collected program to schools/{school}/{program}.md."""
+    infos, examples = _scan_tool_results(messages, turn_start)
+    for key, info in infos.items():
+        path = save_program_md(info, examples.get(key, []))
+        rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
+        print(f"\n  \033[32m📄 Saved → {rel}\033[0m", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # REPL
 # ---------------------------------------------------------------------------
 
@@ -297,6 +351,12 @@ def main() -> None:
                 print(f"\nAgent (after completeness check):\n{followup}\n")
         except Exception as exc:
             print(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
+
+        # Export any collected program data to schools/{school}/{program}.md
+        try:
+            _export_results(messages, turn_start)
+        except Exception as exc:
+            print(f"\033[33m⚠ Export error: {exc}\033[0m")
 
 
 if __name__ == "__main__":
