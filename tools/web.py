@@ -14,6 +14,9 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
+_search_fallback_warned = False
+_extract_fallback_warned = False
+
 
 # ---------------------------------------------------------------------------
 # Search
@@ -28,10 +31,13 @@ def search(
     Search the web and return a list of {"url", "title", "content"} dicts.
     Tries Tavily first; falls back to DuckDuckGo automatically.
     """
+    global _search_fallback_warned
     try:
         return _tavily_search(query, max_results, include_domains)
     except Exception as exc:
-        print(f"  [web] Tavily search unavailable ({exc.__class__.__name__}), using DuckDuckGo")
+        if not _search_fallback_warned:
+            print(f"  [web] Tavily search unavailable ({exc.__class__.__name__}), using DuckDuckGo")
+            _search_fallback_warned = True
         return _ddg_search(query, max_results, include_domains)
 
 
@@ -95,10 +101,13 @@ def extract(url: str) -> str | None:
     Return the cleaned text content of a page, or None on failure.
     Tries Tavily extract first; falls back to requests + BeautifulSoup.
     """
+    global _extract_fallback_warned
     try:
         return _tavily_extract(url)
     except Exception as exc:
-        print(f"  [web] Tavily extract unavailable ({exc.__class__.__name__}), fetching directly")
+        if not _extract_fallback_warned:
+            print(f"  [web] Tavily extract unavailable ({exc.__class__.__name__}), fetching directly")
+            _extract_fallback_warned = True
         return _bs_extract(url)
 
 
