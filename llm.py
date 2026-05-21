@@ -163,7 +163,7 @@ def _openai_complete(system: str, user: str, max_tokens: int, api_key: str, cfg:
             {"role": "user",   "content": user},
         ],
     )
-    return resp.choices[0].message.content.strip()
+    return (resp.choices[0].message.content or "").strip()
 
 
 def _anthropic_complete(system: str, user: str, max_tokens: int, api_key: str, model: str) -> str:
@@ -283,14 +283,22 @@ def _to_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
             system = msg.get("content", "")
             continue
 
+        if role == "user":
+            # Anthropic requires strictly alternating roles. If we have pending
+            # tool_results, fold the new user text into the same user message so
+            # we don't emit two consecutive user turns.
+            blocks = list(pending_results)
+            pending_results = []
+            blocks.append({"type": "text", "text": msg["content"]})
+            content: list | str = blocks if len(blocks) > 1 else msg["content"]
+            result.append({"role": "user", "content": content})
+            continue
+
         if role != "tool" and pending_results:
             result.append({"role": "user", "content": pending_results})
             pending_results = []
 
-        if role == "user":
-            result.append({"role": "user", "content": msg["content"]})
-
-        elif role == "assistant":
+        if role == "assistant":
             tcs = msg.get("tool_calls")
             if tcs:
                 blocks: list[dict] = []
@@ -341,7 +349,7 @@ def _anthropic_chat_with_tools(
     max_tokens: int,
     api_key: str,
     model: str,
-) -> tuple[str | None, list[dict] | None]:
+) -> tuple[str | None, list[dict] | None, dict]:
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
 

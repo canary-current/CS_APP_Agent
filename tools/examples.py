@@ -74,6 +74,11 @@ Webpage text ({note}):
 """
 
 
+def _normalize(s: str) -> str:
+    """Collapse whitespace and lowercase for stable cache keys."""
+    return " ".join(s.lower().split())
+
+
 def _ranked_search(query: str, preferred_domains: list[str]) -> list[dict]:
     """Search and float results from preferred domains to the top."""
     results = web_search(query, max_results=_FETCH_CANDIDATES * 2)
@@ -123,7 +128,7 @@ def fetch_application_examples(
     Returns:
         List of ApplicationExample (may be empty if nothing useful is found).
     """
-    cache_key = f"examples:{school}:{program}"
+    cache_key = f"examples:{_normalize(school)}:{_normalize(program)}"
     cached = get_cached(cache_key)
     if cached:
         return [ApplicationExample(**item) for item in cached["items"]]

@@ -5,6 +5,8 @@ Usage:
   python clean.py           — clears cache/ and schools/
   python clean.py --cache   — clears cache/ only
   python clean.py --schools — clears schools/ only
+
+Also exposes clear_dir() for in-process use (see agent.py /clear command).
 """
 
 from __future__ import annotations
@@ -13,24 +15,23 @@ import shutil
 from pathlib import Path
 
 _ROOT = Path(__file__).parent
-_DIRS = {
+CLEAR_DIRS: dict[str, Path] = {
     "cache":   _ROOT / "cache",
     "schools": _ROOT / "schools",
 }
 
 
-def _clear(name: str, path: Path) -> None:
+def clear_dir(path: Path) -> int:
+    """
+    Remove and re-create the directory. Returns the number of files removed,
+    or -1 if the directory did not exist.
+    """
     if not path.exists():
-        print(f"  {name}/  — nothing to clear")
-        return
-
-    files = list(path.rglob("*"))
-    file_count = sum(1 for f in files if f.is_file())
-
+        return -1
+    count = sum(1 for f in path.rglob("*") if f.is_file())
     shutil.rmtree(path)
     path.mkdir()
-
-    print(f"  {name}/  — removed {file_count} file(s)")
+    return count
 
 
 def main() -> None:
@@ -39,17 +40,20 @@ def main() -> None:
     parser.add_argument("--schools", action="store_true", help="Clear schools/ only")
     args = parser.parse_args()
 
-    targets = []
     if args.cache:
         targets = ["cache"]
     elif args.schools:
         targets = ["schools"]
     else:
-        targets = list(_DIRS)
+        targets = list(CLEAR_DIRS)
 
     print("Clearing:")
     for name in targets:
-        _clear(name, _DIRS[name])
+        count = clear_dir(CLEAR_DIRS[name])
+        if count < 0:
+            print(f"  {name}/  — nothing to clear")
+        else:
+            print(f"  {name}/  — removed {count} file(s)")
     print("Done.")
 
 

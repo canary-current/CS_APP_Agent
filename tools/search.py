@@ -5,6 +5,7 @@ Uses tools.web.search() which tries Tavily first, then DuckDuckGo as fallback.
 """
 
 from __future__ import annotations
+from urllib.parse import urlparse
 from models import SearchResult
 from tools.web import search as web_search
 
@@ -34,11 +35,22 @@ def _score_url(url: str) -> int:
     return score
 
 
+# Recognised educational TLD suffixes across major regions.
+_EDU_TLDS = (
+    ".edu",
+    ".ac.uk", ".ac.jp", ".ac.kr", ".ac.nz", ".ac.za", ".ac.in", ".ac.il", ".ac.at",
+    ".edu.au", ".edu.cn", ".edu.hk", ".edu.sg", ".edu.tw", ".edu.in", ".edu.ph",
+    ".edu.my", ".edu.mx", ".edu.br",
+)
+
+
 def _is_official(url: str) -> bool:
-    url_lower = url.lower()
-    if any(noise in url_lower for noise in _NOISE_DOMAINS):
+    netloc = urlparse(url.lower()).netloc
+    if not netloc:
         return False
-    return ".edu" in url_lower or ".ac." in url_lower or ".university" in url_lower
+    if any(noise in netloc for noise in _NOISE_DOMAINS):
+        return False
+    return any(netloc.endswith(tld) for tld in _EDU_TLDS)
 
 
 def _build_query(school: str, program: str, region: str | None) -> str:

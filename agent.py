@@ -12,7 +12,6 @@ Run:
 
 from __future__ import annotations
 import json
-import shutil
 import sys
 import textwrap
 from pathlib import Path
@@ -23,6 +22,7 @@ from tools.search import search_program, TOOL_SCHEMA as _SEARCH
 from tools.collect import collect_program_info, TOOL_SCHEMA as _COLLECT
 from tools.examples import fetch_application_examples, TOOL_SCHEMA as _EXAMPLES
 from tools.export import save_program_md
+from clean import CLEAR_DIRS, clear_dir
 import checker
 
 # ---------------------------------------------------------------------------
@@ -167,6 +167,9 @@ def _print_progress(info: ProgramInfo) -> None:
 # Agent loop
 # ---------------------------------------------------------------------------
 
+_MAX_TOOL_ITERATIONS = 12  # safety cap; a normal turn uses 3–6 tool calls
+
+
 def _run_turn(messages: list[dict], user_input: str) -> str:
     """
     Append the user message, drive the tool-use loop to completion,
@@ -174,7 +177,7 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
     """
     messages.append({"role": "user", "content": user_input})
 
-    while True:
+    for _ in range(_MAX_TOOL_ITERATIONS):
         text, tool_calls, assistant_msg = llm.chat_with_tools(messages, _TOOLS)
         messages.append(assistant_msg)
 
@@ -198,6 +201,19 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
 
         else:
             return text or ""
+
+    print(f"\n  \033[33m⚠ Reached max tool iterations ({_MAX_TOOL_ITERATIONS}); "
+          f"forcing the model to produce a final answer.\033[0m", flush=True)
+    messages.append({
+        "role": "user",
+        "content": (
+            f"You have used the tool budget for this turn. Stop calling tools and "
+            f"provide the best final answer you can with the data already collected."
+        ),
+    })
+    text, _, assistant_msg = llm.chat_with_tools(messages, tools=[])
+    messages.append(assistant_msg)
+    return text or ""
 
 
 # ---------------------------------------------------------------------------
@@ -357,20 +373,13 @@ _BANNER = """
 ╚══════════════════════════════════════════════╝
 """
 
-_ROOT = Path(__file__).parent
-_CLEAR_DIRS = {"cache": _ROOT / "cache", "schools": _ROOT / "schools"}
-
-
 def _do_clear(targets: list[str]) -> None:
     for name in targets:
-        path = _CLEAR_DIRS[name]
-        if not path.exists():
+        count = clear_dir(CLEAR_DIRS[name])
+        if count < 0:
             print(f"  {name}/  — already empty")
-            continue
-        count = sum(1 for f in path.rglob("*") if f.is_file())
-        shutil.rmtree(path)
-        path.mkdir()
-        print(f"  \033[32m✓ {name}/  — removed {count} file(s)\033[0m")
+        else:
+            print(f"  \033[32m✓ {name}/  — removed {count} file(s)\033[0m")
     print()
 
 
@@ -404,7 +413,7 @@ def main() -> None:
 
         cmd = user_input.lower()
         if cmd == "/clear":
-            _do_clear(list(_CLEAR_DIRS))
+            _do_clear(list(CLEAR_DIRS))
             continue
         if cmd == "/clear cache":
             _do_clear(["cache"])
