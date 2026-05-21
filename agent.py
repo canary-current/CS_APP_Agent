@@ -143,6 +143,37 @@ _SYSTEM = textwrap.dedent("""\
 # Progress bar
 # ---------------------------------------------------------------------------
 
+def _save_now(info: ProgramInfo, examples: list[ApplicationExample] | None = None) -> None:
+    """Write the Markdown file for one program immediately, merging with any
+    prior in-turn collect result so multiple collect calls produce one file
+    with the union of fields. Logs the saved path so the user always sees it."""
+    key = (info.school, info.program)
+    prior = _turn_infos.get(key)
+    if prior is not None:
+        info = _merge_program_infos(prior, info)
+    _turn_infos[key] = info
+    if examples is not None:
+        _turn_examples.setdefault(key, []).extend(examples)
+    try:
+        path = save_program_md(info, _turn_examples.get(key, []))
+    except Exception as exc:
+        print(f"\n  \033[33m⚠ Save error for {info.school} — {info.program}: {exc}\033[0m",
+              flush=True)
+        return
+    rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
+    print(f"\n  \033[32m📄 Saved → {rel}\033[0m", flush=True)
+
+
+# Turn-scoped accumulators reset at the start of each REPL turn.
+_turn_infos: dict[tuple, ProgramInfo] = {}
+_turn_examples: dict[tuple, list[ApplicationExample]] = {}
+
+
+def _reset_turn_state() -> None:
+    _turn_infos.clear()
+    _turn_examples.clear()
+
+
 def _render_progress(info: ProgramInfo) -> None:
     """Render the field-completeness bar on the bottom status line."""
     total = len(checker.REQUIRED)
@@ -208,7 +239,23 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
                     try:
                         data = json.loads(result_str)
                         if "error" not in data:
-                            _render_progress(ProgramInfo(**data))
+                            info = ProgramInfo(**data)
+                            _render_progress(info)
+                            _save_now(info)
+                    except Exception as exc:
+                        print(f"\n  \033[33m⚠ Save skipped: {exc}\033[0m", flush=True)
+
+                elif tc["name"] == "fetch_application_examples":
+                    try:
+                        data = json.loads(result_str)
+                        if isinstance(data, list) and data:
+                            new_exs = [ApplicationExample(**item) for item in data]
+                            ex_key = (new_exs[0].school, new_exs[0].program)
+                            if ex_key in _turn_infos:
+                                # Re-save with newly available examples.
+                                _save_now(_turn_infos[ex_key], new_exs)
+                            else:
+                                _turn_examples.setdefault(ex_key, []).extend(new_exs)
                     except Exception:
                         pass
 
@@ -324,55 +371,6 @@ def _merge_program_infos(base: ProgramInfo, extra: ProgramInfo) -> ProgramInfo:
     )
 
 
-def _scan_tool_results(
-    messages: list[dict],
-    turn_start: int,
-) -> tuple[dict[tuple, ProgramInfo], dict[tuple, list[ApplicationExample]]]:
-    """
-    Walk messages[turn_start:] and return:
-      infos    — {(school, program): ProgramInfo}   (last collect call wins)
-      examples — {(school, program): [ApplicationExample]}
-    """
-    call_id_to_name: dict[str, str] = {}
-    for msg in messages[turn_start:]:
-        if msg.get("role") == "assistant":
-            for tc in msg.get("tool_calls") or []:
-                call_id_to_name[tc["id"]] = tc["function"]["name"]
-
-    infos: dict[tuple, ProgramInfo] = {}
-    examples: dict[tuple, list[ApplicationExample]] = {}
-
-    for msg in messages[turn_start:]:
-        if msg.get("role") != "tool":
-            continue
-        tool_name = call_id_to_name.get(msg.get("tool_call_id", ""))
-        try:
-            data = json.loads(msg["content"])
-        except Exception:
-            continue
-
-        if tool_name == "collect_program_info" and "error" not in data:
-            info = ProgramInfo(**data)
-            key = (info.school, info.program)
-            infos[key] = _merge_program_infos(infos[key], info) if key in infos else info
-
-        elif tool_name == "fetch_application_examples" and isinstance(data, list):
-            for item in data:
-                ex = ApplicationExample(**item)
-                examples.setdefault((ex.school, ex.program), []).append(ex)
-
-    return infos, examples
-
-
-def _export_results(messages: list[dict], turn_start: int) -> None:
-    """Save every collected program to schools/{school}/{program}.md."""
-    infos, examples = _scan_tool_results(messages, turn_start)
-    for key, info in infos.items():
-        path = save_program_md(info, examples.get(key, []))
-        rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
-        print(f"\n  \033[32m📄 Saved → {rel}\033[0m", flush=True)
-
-
 # ---------------------------------------------------------------------------
 # REPL
 # ---------------------------------------------------------------------------
@@ -442,6 +440,7 @@ def main() -> None:
             continue
 
         print()
+        _reset_turn_state()
         status.render(
             top=" \033[36m▸\033[0m  Starting…",
             bottom=" \033[36m●\033[0m  Searching…",
@@ -465,10 +464,9 @@ def main() -> None:
 
         print(f"\nAgent:\n{followup if followup else reply}\n")
 
-        try:
-            _export_results(messages, turn_start)
-        except Exception as exc:
-            print(f"\033[33m⚠ Export error: {exc}\033[0m")
+        if not _turn_infos:
+            print("  \033[33mℹ No program data collected this turn — "
+                  "nothing to save.\033[0m", flush=True)
 
         status.render(
             top=" \033[36m▸\033[0m  Idle",
