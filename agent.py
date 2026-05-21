@@ -357,14 +357,13 @@ def main() -> None:
             print(f"\033[31mError: {exc}\033[0m")
             continue
 
-        print(f"\nAgent:\n{reply}\n")
-
         try:
             followup = _completeness_followup(messages, turn_start)
-            if followup:
-                print(f"\nAgent (after completeness check):\n{followup}\n")
         except Exception as exc:
             print(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
+            followup = None
+
+        print(f"\nAgent:\n{followup if followup else reply}\n")
 
         try:
             _export_results(messages, turn_start)
