@@ -98,13 +98,24 @@ _SYSTEM = textwrap.dedent("""\
     4. Present a complete answer using the format below.
 
     IMPORTANT — one program at a time:
-    • If the user asks about multiple programs (e.g. "MIT and Stanford CS PhD"),
-      research them STRICTLY SEQUENTIALLY. Complete steps 1–4 for the first
-      program — including the final written answer — BEFORE issuing any tool
-      call for the next program.
+    • If the user asks about multiple programs (e.g. "MIT and Stanford CS PhD"
+      or "five good TCS master programs"), research them STRICTLY SEQUENTIALLY.
+      Complete steps 1–4 for the first program — including the final written
+      answer — BEFORE issuing any tool call for the next program.
     • Never interleave tool calls for different (school, program) pairs.
     • Emit exactly one tool call per response; wait for its result before
       deciding the next step.
+
+    IMPORTANT — per-program tool budget:
+    • Aim for ~3–5 tool calls per program: 1 search_program, 1–2 collect_program_info,
+      1 fetch_application_examples. DO NOT keep trying new URLs to fill the same
+      missing field — if a page returns an error or sparse data after one retry,
+      ACCEPT "Not available" for that field and move on.
+    • If the user asked for N programs, you have a hard budget of ~30 tool calls
+      total across the whole turn — allocate roughly 30/N calls per program.
+    • After finishing a program (writing its complete-format answer in the reply
+      text), immediately start the next program's search. Do not stop until you
+      have covered every program the user asked for.
 
     IMPORTANT — school and program names:
     • Always pass the full official institution name (e.g. "Hong Kong University
@@ -236,7 +247,7 @@ def _tool_status_top(name: str, args: dict) -> str:
 # Agent loop
 # ---------------------------------------------------------------------------
 
-_MAX_TOOL_ITERATIONS = 12  # safety cap; a normal turn uses 3–6 tool calls
+_MAX_TOOL_ITERATIONS = 30  # safety cap; a normal turn uses 3–6 tool calls per program
 
 
 def _run_turn(messages: list[dict], user_input: str) -> str:
@@ -352,10 +363,19 @@ def _completeness_followup(
     Inspect every collect_program_info result from the latest turn.
     If any required fields are missing, inject one follow-up turn automatically
     and return its reply. Returns None if everything is complete.
+
+    Skipped entirely when the turn covered multiple programs — re-running
+    _run_turn with a "fill these missing fields for all of them" prompt
+    burns the whole tool budget again on programs the user already saw.
     """
-    infos = _collect_infos_from_turn(messages, turn_start)
+    # Use the in-memory turn map (which has had _merge_program_infos applied)
+    # rather than scanning raw tool results — gives us one merged ProgramInfo
+    # per (school, program) instead of one entry per collect call.
+    infos = list(_turn_infos.values())
     if not infos:
         return None
+    if len(infos) > 1:
+        return None  # multi-program query: don't double-spend the budget
 
     prompts: list[str] = []
     total_missing = 0
