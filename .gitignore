@@ -21,3 +21,6 @@ build/
 # IDEs
 .vscode/
 .idea/
+
+# Claude Code
+CLAUDE.md
