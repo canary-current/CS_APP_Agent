@@ -57,6 +57,7 @@ def _resolve_school_dir(school: str) -> Path:
 def save_program_md(
     info: ProgramInfo,
     examples: list[ApplicationExample] | None = None,
+    body: str | None = None,
 ) -> Path:
     """
     Write (or overwrite) a Markdown file for one program.
@@ -64,6 +65,10 @@ def save_program_md(
     Args:
         info:     Structured program data from collect_program_info.
         examples: Optional list from fetch_application_examples.
+        body:     If provided, used as the file body verbatim (the agent's
+                  final reply text) instead of the structured layout built
+                  from `info`/`examples`. YAML frontmatter is added either
+                  way so the file is still machine-readable.
 
     Returns:
         Path of the written file.
@@ -79,6 +84,26 @@ def save_program_md(
     school_dir = _resolve_school_dir(info.school)
     school_dir.mkdir(parents=True, exist_ok=True)
     out_path = school_dir / f"{_safe(info.program)}.md"
+
+    if body is not None:
+        out_path.write_text(
+            "\n".join([
+                "---",
+                f"school: {info.school}",
+                f"program: {info.program}",
+                f"source: {info.url}",
+                f"updated: {date.today()}",
+                "---",
+                "",
+                f"> Source: <{info.url}>  ",
+                f"> Updated: {date.today()}",
+                "",
+                body.strip(),
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        return out_path
 
     lr = info.language_requirements
     waiver = (

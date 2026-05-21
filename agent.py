@@ -499,11 +499,25 @@ def main() -> None:
             status.emit(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
             followup = None
 
-        status.emit(f"\nAgent:\n{followup if followup else reply}\n")
+        final_reply = followup if followup else reply
+        status.emit(f"\nAgent:\n{final_reply}\n")
 
         if not _turn_infos:
             status.emit("  \033[33mℹ No program data collected this turn — "
                         "nothing to save.\033[0m")
+        else:
+            # Rewrite each collected program's .md with the agent's full
+            # narrative reply — the structured _save_now during the tool
+            # loop only captured what the LLM could extract field-by-field;
+            # the final reply contains the synthesised answer the user
+            # actually saw.
+            for key, info in _turn_infos.items():
+                examples = _turn_examples.get(key, [])
+                try:
+                    save_program_md(info, examples, body=final_reply)
+                except Exception as exc:
+                    status.emit(f"  \033[33m⚠ Final save error for "
+                                f"{info.school}: {exc}\033[0m")
 
         # Hide the status block between turns — the next "You:" prompt
         # sits on a clean line at the visible bottom.
