@@ -18,7 +18,7 @@ import textwrap
 from pathlib import Path
 
 import llm
-from models import ProgramInfo, ApplicationExample
+from models import ProgramInfo, ApplicationExample, LanguageRequirements, Tuition
 from tools.search import search_program, TOOL_SCHEMA as _SEARCH
 from tools.collect import collect_program_info, TOOL_SCHEMA as _COLLECT
 from tools.examples import fetch_application_examples, TOOL_SCHEMA as _EXAMPLES
@@ -264,6 +264,37 @@ def _completeness_followup(
 # Markdown export
 # ---------------------------------------------------------------------------
 
+def _merge_program_infos(base: ProgramInfo, extra: ProgramInfo) -> ProgramInfo:
+    """Merge extra into base, filling missing fields without overwriting existing ones."""
+    lr_b, lr_e = base.language_requirements, extra.language_requirements
+    t_b, t_e   = base.tuition, extra.tuition
+    return ProgramInfo(
+        school=base.school,
+        program=base.program,
+        url=base.url,
+        deadline=base.deadline if base.deadline is not None else extra.deadline,
+        language_requirements=LanguageRequirements(
+            toefl_min=lr_b.toefl_min if lr_b.toefl_min is not None else lr_e.toefl_min,
+            ielts_min=lr_b.ielts_min if lr_b.ielts_min is not None else lr_e.ielts_min,
+            english_institution_waiver=(
+                lr_b.english_institution_waiver
+                if lr_b.english_institution_waiver is not None
+                else lr_e.english_institution_waiver
+            ),
+            other_tests=list({*lr_b.other_tests, *lr_e.other_tests}),
+            notes=lr_b.notes or lr_e.notes,
+        ),
+        tuition=Tuition(
+            local=t_b.local if t_b.local is not None else t_e.local,
+            international=t_b.international if t_b.international is not None else t_e.international,
+            notes=t_b.notes or t_e.notes,
+        ),
+        funding=base.funding or extra.funding,
+        length_years=base.length_years if base.length_years is not None else extra.length_years,
+        courses=list({*base.courses, *extra.courses}),
+    )
+
+
 def _scan_tool_results(
     messages: list[dict],
     turn_start: int,
@@ -293,7 +324,8 @@ def _scan_tool_results(
 
         if tool_name == "collect_program_info" and "error" not in data:
             info = ProgramInfo(**data)
-            infos[(info.school, info.program)] = info
+            key = (info.school, info.program)
+            infos[key] = _merge_program_infos(infos[key], info) if key in infos else info
 
         elif tool_name == "fetch_application_examples" and isinstance(data, list):
             for item in data:

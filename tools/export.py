@@ -169,5 +169,5 @@ def save_program_md(
                     "",
                 ]
 
-    out_path.write_text("\n".join(lines), encoding="utf-8")
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out_path

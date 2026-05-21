@@ -132,6 +132,8 @@ def _bs_extract(url: str) -> str | None:
     except Exception:
         return None
 
+    # Trust chardet over the (often wrong) HTTP header for CJK and other non-ASCII pages.
+    resp.encoding = resp.apparent_encoding
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe"]):
         tag.decompose()

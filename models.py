@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 
 class SearchResult(BaseModel):

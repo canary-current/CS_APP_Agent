@@ -88,8 +88,9 @@ def validate_config() -> tuple[bool, str]:
     """
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
 
+    presets = ", ".join(sorted(_PRESETS))
+
     if not provider:
-        presets = ", ".join(sorted(_PRESETS))
         return False, (
             "LLM_PROVIDER is not set in your .env file.\n"
             "\n"
@@ -105,6 +106,20 @@ def validate_config() -> tuple[bool, str]:
             "  LLM_BASE_URL=<base-url>\n"
             "  LLM_API_KEY=<your-key>\n"
             "  LLM_MODEL=<model-name>"
+        )
+
+    if provider not in _PRESETS and not (
+        os.getenv("LLM_BASE_URL") and os.getenv("LLM_MODEL")
+    ):
+        return False, (
+            f"Unknown provider '{provider}'.\n"
+            "\n"
+            f"Supported presets: {presets}\n"
+            "\n"
+            "To use a custom endpoint instead, also set:\n"
+            "  LLM_BASE_URL=<base-url>\n"
+            "  LLM_MODEL=<model-name>\n"
+            "  LLM_API_KEY=<your-key>"
         )
 
     cfg = _resolve_config()

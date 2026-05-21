@@ -23,7 +23,8 @@ from tools.cache import get_cached, set_cached
 from tools.web import search as web_search, extract as web_extract
 import llm
 
-_RESULTS_PER_TYPE = 3   # how many pages to fetch per search query
+_TARGET_PER_TYPE  = 3   # stop once this many valid summaries are collected
+_FETCH_CANDIDATES = 6   # fetch up to this many pages (more needed with DDG fallback)
 _CHAR_LIMIT = 18_000   # cap for essay/stats pages; use full content below this
 
 # Domains that host real SOPs / admission results — boosted in ranking
@@ -75,7 +76,7 @@ Webpage text ({note}):
 
 def _ranked_search(query: str, preferred_domains: list[str]) -> list[dict]:
     """Search and float results from preferred domains to the top."""
-    results = web_search(query, max_results=8)
+    results = web_search(query, max_results=_FETCH_CANDIDATES * 2)
 
     def _rank(r: dict) -> int:
         url = r["url"].lower()
@@ -135,7 +136,9 @@ def fetch_application_examples(
     )
     essay_results = _ranked_search(essay_query, _PREFERRED_ESSAY_DOMAINS)
 
-    for result in essay_results[:_RESULTS_PER_TYPE]:
+    for result in essay_results[:_FETCH_CANDIDATES]:
+        if sum(1 for e in examples if e.type in ("SOP", "personal_statement")) >= _TARGET_PER_TYPE:
+            break
         url = result["url"]
         print(f"  [examples] fetching essay page: {url}")
         summary_data = _summarise_page(url, _ESSAY_PROMPT)
@@ -160,7 +163,10 @@ def fetch_application_examples(
     )
     stats_results = _ranked_search(stats_query, _PREFERRED_STATS_DOMAINS)
 
-    for result in stats_results[:_RESULTS_PER_TYPE]:
+    stats_count = 0
+    for result in stats_results[:_FETCH_CANDIDATES]:
+        if stats_count >= _TARGET_PER_TYPE:
+            break
         url = result["url"]
         print(f"  [examples] fetching stats page: {url}")
         summary_data = _summarise_page(url, _STATS_PROMPT)
@@ -177,6 +183,7 @@ def fetch_application_examples(
             source_url=url,
             content_summary=full_summary,
         ))
+        stats_count += 1
 
     set_cached(cache_key, {"items": [e.model_dump() for e in examples]})
     return examples

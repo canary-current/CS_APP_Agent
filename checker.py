@@ -17,6 +17,13 @@ class FieldSpec:
     label: str                          # shown to the agent in the follow-up prompt
     is_missing: Callable[[ProgramInfo], bool]
     short: str = ""                     # abbreviated name for the progress bar
+    critical: bool = False              # triggers sparse-retry in collect.py if missing
+
+
+# Raw LLM-dict keys considered "critical" — used by collect.py to decide whether
+# to retry on a sparse page. Derived from REQUIRED entries with critical=True so
+# the two lists stay in sync.
+CRITICAL_RAW_FIELDS: tuple[str, ...] = ()  # populated after REQUIRED is defined
 
 
 # Every field in this list is considered mandatory.
@@ -26,16 +33,19 @@ REQUIRED: list[FieldSpec] = [
         label="application deadline",
         is_missing=lambda i: i.deadline is None,
         short="deadline",
+        critical=True,
     ),
     FieldSpec(
         label="TOEFL minimum score",
         is_missing=lambda i: i.language_requirements.toefl_min is None,
         short="TOEFL",
+        critical=True,
     ),
     FieldSpec(
         label="IELTS minimum score",
         is_missing=lambda i: i.language_requirements.ielts_min is None,
         short="IELTS",
+        critical=True,
     ),
     FieldSpec(
         label="English-institution language test waiver policy "
@@ -60,6 +70,20 @@ REQUIRED: list[FieldSpec] = [
         short="length",
     ),
 ]
+
+
+# Map FieldSpec.short → raw LLM dict key for critical fields.
+# Only needed for the sparse-retry check in collect.py.
+_CRITICAL_SHORT_TO_RAW: dict[str, str] = {
+    "deadline": "deadline",
+    "TOEFL":    "toefl_min",
+    "IELTS":    "ielts_min",
+}
+CRITICAL_RAW_FIELDS = tuple(
+    _CRITICAL_SHORT_TO_RAW[f.short]
+    for f in REQUIRED
+    if f.critical and f.short in _CRITICAL_SHORT_TO_RAW
+)
 
 
 def missing_fields(info: ProgramInfo) -> list[str]:

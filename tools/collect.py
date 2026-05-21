@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from models import ProgramInfo, LanguageRequirements, Tuition
 from tools.cache import get_cached, set_cached
 from tools.web import search as web_search, extract as web_extract
+from checker import CRITICAL_RAW_FIELDS
 import llm
 
 _SYSTEM = (
@@ -52,15 +53,13 @@ Webpage text ({note}):
 {content}
 """
 
-_CRITICAL_FIELDS = ("deadline", "toefl_min", "ielts_min")
-
 # Send the full page for short content; cap long pages at this limit.
 # Most admission pages are under 20 k chars; pushing past that adds noise.
 _CHAR_LIMIT = 24_000
 
 
 def _is_sparse(data: dict) -> bool:
-    return all(data.get(f) is None for f in _CRITICAL_FIELDS)
+    return all(data.get(f) is None for f in CRITICAL_RAW_FIELDS)
 
 
 def _truncate(content: str) -> tuple[str, str]:
@@ -109,10 +108,10 @@ def _retry_search(school: str, program: str, base_url: str) -> dict | None:
 
 
 def _merge(base: dict, extra: dict) -> dict:
-    """Fill null/missing values in base with values from extra."""
+    """Fill None/missing values in base with values from extra."""
     merged = dict(base)
     for key, val in extra.items():
-        if not merged.get(key) and val:
+        if merged.get(key) is None and val is not None:
             merged[key] = val
     merged["courses"] = list({
         c for c in (base.get("courses") or []) + (extra.get("courses") or [])
