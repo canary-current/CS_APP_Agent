@@ -149,27 +149,10 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
     messages.append({"role": "user", "content": user_input})
 
     while True:
-        text, tool_calls = llm.chat_with_tools(messages, _TOOLS)
+        text, tool_calls, assistant_msg = llm.chat_with_tools(messages, _TOOLS)
+        messages.append(assistant_msg)
 
         if tool_calls is not None:
-            # Store in OpenAI format so the history stays consistent across providers.
-            assistant_msg: dict = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc["args"]),
-                        },
-                    }
-                    for tc in tool_calls
-                ],
-            }
-            messages.append(assistant_msg)
-
             for tc in tool_calls:
                 print(f"\n  \033[36m⚙ {_tool_label(tc['name'], tc['args'])}\033[0m",
                       flush=True)
@@ -181,9 +164,7 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
                 })
 
         else:
-            reply = text or ""
-            messages.append({"role": "assistant", "content": reply})
-            return reply
+            return text or ""
 
 
 # ---------------------------------------------------------------------------

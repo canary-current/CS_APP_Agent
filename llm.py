@@ -126,7 +126,7 @@ def chat_with_tools(
     tools: list[dict],
     *,
     max_tokens: int = 4096,
-) -> tuple[str | None, list[dict] | None]:
+) -> tuple[str | None, list[dict] | None, dict]:
     """
     Send a conversation (OpenAI-format, including system message) to the LLM.
 
@@ -135,9 +135,12 @@ def chat_with_tools(
         tools:    OpenAI-format tool schemas.
 
     Returns:
-        (text, None)       — model returned a text response.
-        (None, tool_calls) — model wants to invoke tools.
+        (text, None, assistant_msg)       — model returned a text response.
+        (None, tool_calls, assistant_msg) — model wants to invoke tools.
 
+    assistant_msg is the complete dict to append to the message history;
+    it may include provider-specific fields (e.g. reasoning_content for
+    DeepSeek thinking models) that must be echoed back on the next turn.
     tool_calls format: [{"id": str, "name": str, "args": dict}, ...]
     """
     cfg = _resolve_config()
@@ -153,7 +156,7 @@ def _openai_chat_with_tools(
     max_tokens: int,
     api_key: str,
     cfg: dict,
-) -> tuple[str | None, list[dict] | None]:
+) -> tuple[str | None, list[dict] | None, dict]:
     from openai import OpenAI
     client = OpenAI(api_key=api_key, base_url=cfg.get("url") or None)
     response = client.chat.completions.create(
@@ -167,12 +170,36 @@ def _openai_chat_with_tools(
     msg = choice.message
 
     if choice.finish_reason == "tool_calls":
-        return None, [
+        assistant_msg: dict = {
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in msg.tool_calls
+            ],
+        }
+        # Preserve reasoning_content for thinking-mode models (e.g. DeepSeek-R1,
+        # deepseek-v4-pro) — the API requires it be echoed back on the next turn.
+        if getattr(msg, "reasoning_content", None):
+            assistant_msg["reasoning_content"] = msg.reasoning_content
+
+        tool_calls = [
             {"id": tc.id, "name": tc.function.name, "args": json.loads(tc.function.arguments)}
             for tc in msg.tool_calls
         ]
+        return None, tool_calls, assistant_msg
 
-    return (msg.content or ""), None
+    assistant_msg = {"role": "assistant", "content": msg.content or ""}
+    if getattr(msg, "reasoning_content", None):
+        assistant_msg["reasoning_content"] = msg.reasoning_content
+    return (msg.content or ""), None, assistant_msg
 
 
 # --- Anthropic message format conversion ------------------------------------
@@ -269,11 +296,29 @@ def _anthropic_chat_with_tools(
     )
 
     if response.stop_reason == "tool_use":
-        return None, [
+        tool_calls = [
             {"id": b.id, "name": b.name, "args": b.input}
             for b in response.content
             if b.type == "tool_use"
         ]
+        # Build an OpenAI-format assistant message so the history stays consistent.
+        text_blocks = [b.text for b in response.content if hasattr(b, "text")]
+        assistant_msg = {
+            "role": "assistant",
+            "content": "".join(text_blocks),
+            "tool_calls": [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc["args"]),
+                    },
+                }
+                for tc in tool_calls
+            ],
+        }
+        return None, tool_calls, assistant_msg
 
     text = "".join(b.text for b in response.content if hasattr(b, "text"))
-    return text.strip() or "", None
+    return text.strip() or "", None, {"role": "assistant", "content": text.strip() or ""}
