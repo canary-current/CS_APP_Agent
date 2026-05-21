@@ -105,6 +105,7 @@ def save_program_md(
         "",
         f"- **TOEFL minimum:** {lr.toefl_min if lr.toefl_min is not None else 'Not available'}",
         f"- **IELTS minimum:** {lr.ielts_min if lr.ielts_min is not None else 'Not available'}",
+        f"- **Other accepted tests:** {', '.join(lr.other_tests) if lr.other_tests else 'None listed'}",
         f"- **English-institution waiver:** {waiver}",
     ]
 

@@ -14,6 +14,7 @@ class LanguageRequirements(BaseModel):
     toefl_min: int | None = None
     ielts_min: float | None = None
     english_institution_waiver: bool | None = None  # None = not found on page
+    other_tests: list[str] = []   # e.g. ["Duolingo: 120+", "PTE Academic: 65+"]
     notes: str = ""
 
 

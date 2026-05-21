@@ -35,6 +35,9 @@ Return a JSON object with these keys (use null when information is absent):
   ielts_min             – minimum IELTS overall band score as a float
   english_waiver        – true if graduates of English-taught institutions are exempt from
                           language tests; false if explicitly no waiver; null if not mentioned
+  other_language_tests  – list of other accepted tests with their minimums, e.g.
+                          ["Duolingo English Test: 120+", "PTE Academic: 65+"];
+                          empty list if none mentioned
   language_notes        – any extra language-test details worth keeping (string or "")
   tuition_local         – annual tuition for local/domestic students as a string with currency,
                           e.g. "HK$42,100/year" or "US$18,000/year"; null if not found
@@ -153,6 +156,7 @@ def collect_program_info(url: str, school: str, program: str) -> ProgramInfo:
                 None if data.get("english_waiver") is None
                 else bool(data["english_waiver"])
             ),
+            other_tests=data.get("other_language_tests") or [],
             notes=data.get("language_notes", ""),
         ),
         tuition=Tuition(

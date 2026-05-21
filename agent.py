@@ -113,6 +113,7 @@ _SYSTEM = textwrap.dedent("""\
     ### Language Requirements
     - TOEFL minimum: <score or Not available>
     - IELTS minimum: <score or Not available>
+    - Other accepted tests: <e.g. "Duolingo: 120+" or "None listed">
     - English-institution waiver: <Yes / No / Not specified>
     - Notes: <any extra detail, or omit>
 
