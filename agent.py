@@ -1,7 +1,7 @@
 """
 CS Application Agent — interactive REPL.
 
-Orchestrates three tools via DeepSeek-V3 (OpenAI-compatible API):
+Orchestrates three tools via any supported LLM provider (see llm.py):
   search_program          → find the official admissions page
   collect_program_info    → scrape deadlines, language reqs, funding, courses
   fetch_application_examples → find SOPs, personal statements, admission stats
@@ -14,10 +14,9 @@ from __future__ import annotations
 import json
 import sys
 import textwrap
-from openai import OpenAI
-
 from pathlib import Path
-from config import DEEPSEEK_API_KEY
+
+import llm
 from models import ProgramInfo, ApplicationExample
 from tools.search import search_program, TOOL_SCHEMA as _SEARCH
 from tools.collect import collect_program_info, TOOL_SCHEMA as _COLLECT
@@ -139,7 +138,7 @@ _SYSTEM = textwrap.dedent("""\
 # Agent loop
 # ---------------------------------------------------------------------------
 
-def _run_turn(client: OpenAI, messages: list[dict], user_input: str) -> str:
+def _run_turn(messages: list[dict], user_input: str) -> str:
     """
     Append the user message, drive the tool-use loop to completion,
     and return the final assistant reply.
@@ -147,49 +146,39 @@ def _run_turn(client: OpenAI, messages: list[dict], user_input: str) -> str:
     messages.append({"role": "user", "content": user_input})
 
     while True:
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            tools=_TOOLS,
-            tool_choice="auto",
-            max_tokens=4096,
-        )
+        text, tool_calls = llm.chat_with_tools(messages, _TOOLS)
 
-        choice = response.choices[0]
-        msg = choice.message
-
-        if choice.finish_reason == "tool_calls":
-            # Reconstruct as a plain dict so it serialises cleanly next turn.
+        if tool_calls is not None:
+            # Store in OpenAI format so the history stays consistent across providers.
             assistant_msg: dict = {
                 "role": "assistant",
-                "content": msg.content or "",
+                "content": "",
                 "tool_calls": [
                     {
-                        "id": tc.id,
+                        "id": tc["id"],
                         "type": "function",
                         "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["args"]),
                         },
                     }
-                    for tc in msg.tool_calls
+                    for tc in tool_calls
                 ],
             }
             messages.append(assistant_msg)
 
-            for tc in msg.tool_calls:
-                args = json.loads(tc.function.arguments)
-                print(f"\n  \033[36m⚙ {_tool_label(tc.function.name, args)}\033[0m",
+            for tc in tool_calls:
+                print(f"\n  \033[36m⚙ {_tool_label(tc['name'], tc['args'])}\033[0m",
                       flush=True)
-                result_str = _dispatch(tc.function.name, args)
+                result_str = _dispatch(tc["name"], tc["args"])
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tc.id,
+                    "tool_call_id": tc["id"],
                     "content": result_str,
                 })
 
         else:
-            reply = msg.content or ""
+            reply = text or ""
             messages.append({"role": "assistant", "content": reply})
             return reply
 
@@ -223,7 +212,6 @@ def _collect_infos_from_turn(messages: list[dict], turn_start: int) -> list[Prog
 
 
 def _completeness_followup(
-    client: OpenAI,
     messages: list[dict],
     turn_start: int,
 ) -> str | None:
@@ -252,7 +240,7 @@ def _completeness_followup(
         f" — auto-searching…\033[0m",
         flush=True,
     )
-    return _run_turn(client, messages, "\n\n".join(prompts))
+    return _run_turn(messages, "\n\n".join(prompts))
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +276,7 @@ def _scan_tool_results(
 
         if tool_name == "collect_program_info" and "error" not in data:
             info = ProgramInfo(**data)
-            infos[(info.school, info.program)] = info  # later call overwrites earlier
+            infos[(info.school, info.program)] = info
 
         elif tool_name == "fetch_application_examples" and isinstance(data, list):
             for item in data:
@@ -321,13 +309,10 @@ _BANNER = """
 
 
 def main() -> None:
-    client = OpenAI(
-        api_key=DEEPSEEK_API_KEY,
-        base_url="https://api.deepseek.com",
-    )
     messages: list[dict] = [{"role": "system", "content": _SYSTEM}]
 
     print(_BANNER)
+    print(f"  Provider: {llm.provider_label()}\n")
 
     while True:
         try:
@@ -345,22 +330,20 @@ def main() -> None:
         print()
         turn_start = len(messages)
         try:
-            reply = _run_turn(client, messages, user_input)
+            reply = _run_turn(messages, user_input)
         except Exception as exc:
             print(f"\033[31mError: {exc}\033[0m")
             continue
 
         print(f"\nAgent:\n{reply}\n")
 
-        # Deterministic completeness check — one silent follow-up if needed.
         try:
-            followup = _completeness_followup(client, messages, turn_start)
+            followup = _completeness_followup(messages, turn_start)
             if followup:
                 print(f"\nAgent (after completeness check):\n{followup}\n")
         except Exception as exc:
             print(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
 
-        # Export any collected program data to schools/{school}/{program}.md
         try:
             _export_results(messages, turn_start)
         except Exception as exc:

@@ -49,7 +49,7 @@ SOP tip: name specific faculty whose research aligns with yours.
 
 ```
 User prompt
-  └── DeepSeek-V3 (orchestrator, tool-calling loop)
+  └── LLM orchestrator (any supported provider — see below)
         ├── search_program(school, program, region?)
         │     web.search() → URL quality ranking → best .edu/.ac. page
         ├── collect_program_info(url, school, program)
@@ -64,8 +64,8 @@ User prompt
 **Key design decisions**
 
 - **Stateless tools** — each tool is a pure function; the LLM holds all conversation state.
+- **Provider-agnostic LLM layer** (`llm.py`) — swap any supported provider with one env var. The same abstraction drives both the agent's tool-calling loop and the internal extraction calls.
 - **Provider-agnostic web layer** (`tools/web.py`) — all network calls go through a single module. Tavily is tried first; DuckDuckGo (no key) and requests+BeautifulSoup are automatic fallbacks.
-- **Provider-agnostic LLM layer** (`llm.py`) — swap between DeepSeek and Anthropic Claude by changing one env var.
 - **Deterministic completeness checker** (`checker.py`) — after every turn, required fields are validated against the raw `ProgramInfo` struct. Missing fields trigger one automatic follow-up search, independent of the LLM's phrasing choices.
 - **Fixed response format** — the system prompt enforces seven named sections in every program answer so responses are structurally consistent.
 - **Auto-retry on sparse pages** — if `collect_program_info` lands on a shallow page, it searches the same domain for a richer requirements page and merges both extractions.
@@ -76,7 +76,7 @@ User prompt
 ```
 agent.py          REPL — drives the tool-calling loop and completeness check
 checker.py        Deterministic completeness validator for ProgramInfo
-llm.py            LLM abstraction (DeepSeek / Anthropic)
+llm.py            Provider-agnostic LLM abstraction (presets + custom endpoints)
 models.py         Pydantic models: SearchResult, ProgramInfo, ApplicationExample
 config.py         Env var loading; TAVILY_API_KEY is optional
 tools/
@@ -107,13 +107,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` — set `LLM_PROVIDER` and the matching key:
 
 ```ini
-DEEPSEEK_API_KEY=sk-...        # required — platform.deepseek.com
-TAVILY_API_KEY=tvly-...        # optional — tavily.com (free tier: 1 000 credits/month)
-ANTHROPIC_API_KEY=sk-ant-...   # optional — only needed if LLM_PROVIDER=anthropic
-LLM_PROVIDER=deepseek          # "deepseek" (default) or "anthropic"
+LLM_PROVIDER=deepseek          # see provider table below
+DEEPSEEK_API_KEY=sk-...        # key for whichever provider you chose
+TAVILY_API_KEY=tvly-...        # optional — DuckDuckGo used as fallback
 ```
 
 **3. Run**
@@ -122,13 +121,34 @@ LLM_PROVIDER=deepseek          # "deepseek" (default) or "anthropic"
 python agent.py
 ```
 
-## API Keys
+## Supported LLM Providers
+
+Set `LLM_PROVIDER` to any preset name and provide the matching API key:
+
+| `LLM_PROVIDER` | Default model | Key env var | Where to get the key |
+|---|---|---|---|
+| `deepseek` *(default)* | `deepseek-chat` | `DEEPSEEK_API_KEY` | platform.deepseek.com |
+| `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` | platform.openai.com |
+| `anthropic` | `claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` | console.anthropic.com |
+| `gemini` | `gemini-2.0-flash` | `GEMINI_API_KEY` | aistudio.google.com |
+| `groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | console.groq.com |
+| `mistral` | `mistral-small-latest` | `MISTRAL_API_KEY` | console.mistral.ai |
+| `xai` | `grok-3-mini` | `XAI_API_KEY` | console.x.ai |
+| `together` | `meta-llama/Llama-3-70b-chat-hf` | `TOGETHER_API_KEY` | api.together.xyz |
+| `ollama` | `llama3.2` | *(none — local)* | ollama.com |
+
+**Optional overrides** — apply to any preset:
+```ini
+LLM_API_KEY=    # override the preset's key var
+LLM_BASE_URL=   # custom OpenAI-compatible endpoint
+LLM_MODEL=      # override the preset's default model
+```
+
+**Web search keys:**
 
 | Key | Where to get it | Required? |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) | Yes |
-| `TAVILY_API_KEY` | [tavily.com](https://tavily.com) | No — DuckDuckGo used as fallback |
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) | No — only if `LLM_PROVIDER=anthropic` |
+| `TAVILY_API_KEY` | tavily.com | No — DuckDuckGo used as fallback |
 
 ## Web Search Fallback
 
@@ -174,12 +194,23 @@ Fields that genuinely cannot be found are stated as "Not available" rather than 
 
 ## Switching LLM Provider
 
+Change one line in `.env` — both the agent's tool-calling loop and the internal extraction calls switch together:
+
 ```ini
-LLM_PROVIDER=deepseek    # DeepSeek-V3 via OpenAI-compatible API (default)
-LLM_PROVIDER=anthropic   # Claude Haiku via Anthropic SDK
+LLM_PROVIDER=deepseek    # default
+LLM_PROVIDER=openai
+LLM_PROVIDER=anthropic
+LLM_PROVIDER=groq        # fast and free-tier friendly
+LLM_PROVIDER=ollama      # fully local, no key needed
 ```
 
-The agent's tool-calling loop always uses DeepSeek. `LLM_PROVIDER` controls only the internal extraction calls inside `collect_program_info` and `fetch_application_examples`.
+For a **custom OpenAI-compatible endpoint** (LM Studio, vLLM, etc.), skip the preset and set the URL directly:
+
+```ini
+LLM_BASE_URL=http://localhost:1234/v1
+LLM_API_KEY=not-needed
+LLM_MODEL=my-local-model
+```
 
 ## Caching
 
@@ -192,8 +223,8 @@ Results are cached in `cache/` as JSON files keyed by a SHA-256 hash of the URL 
 
 | Package | Purpose |
 |---|---|
-| `openai` | DeepSeek API (OpenAI-compatible) + agent tool-calling loop |
-| `anthropic` | Optional Claude backend |
+| `openai` | OpenAI-compatible API client (DeepSeek, Gemini, Groq, Mistral, Ollama, …) |
+| `anthropic` | Anthropic Claude SDK (used when `LLM_PROVIDER=anthropic`) |
 | `tavily-python` | Primary web search and page extraction |
 | `ddgs` | DuckDuckGo search fallback (no API key required) |
 | `requests` + `beautifulsoup4` | Page extraction fallback |

@@ -1,43 +1,101 @@
 """
-Thin LLM abstraction — supports Anthropic (Claude) and DeepSeek.
-Select the provider via the LLM_PROVIDER env var ("anthropic" or "deepseek").
+LLM abstraction — supports any provider via preset or custom configuration.
+
+Provider selection (in order of precedence):
+  1. LLM_PROVIDER=<preset>   — one of the named presets below
+  2. LLM_BASE_URL + LLM_API_KEY — arbitrary OpenAI-compatible endpoint
+  3. Default: deepseek
+
+Per-provider overrides (all optional):
+  LLM_API_KEY   — overrides the preset's default key env var
+  LLM_BASE_URL  — overrides the preset's base URL (openai-type only)
+  LLM_MODEL     — overrides the preset's default model
 """
 
 from __future__ import annotations
+import json
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").lower()
+# ---------------------------------------------------------------------------
+# Provider presets
+# ---------------------------------------------------------------------------
 
-# DeepSeek models
-_DEEPSEEK_CHAT  = "deepseek-chat"        # DeepSeek-V3 — fast, cheap
-_DEEPSEEK_REASON = "deepseek-reasoner"   # DeepSeek-R1 — for complex reasoning
+_PRESETS: dict[str, dict] = {
+    "deepseek":  {"type": "openai",    "url": "https://api.deepseek.com",
+                  "model": "deepseek-chat",                     "key_env": "DEEPSEEK_API_KEY"},
+    "openai":    {"type": "openai",    "url": "https://api.openai.com/v1",
+                  "model": "gpt-4o-mini",                       "key_env": "OPENAI_API_KEY"},
+    "anthropic": {"type": "anthropic",
+                  "model": "claude-haiku-4-5-20251001",         "key_env": "ANTHROPIC_API_KEY"},
+    "gemini":    {"type": "openai",    "url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                  "model": "gemini-2.0-flash",                  "key_env": "GEMINI_API_KEY"},
+    "groq":      {"type": "openai",    "url": "https://api.groq.com/openai/v1",
+                  "model": "llama-3.3-70b-versatile",           "key_env": "GROQ_API_KEY"},
+    "mistral":   {"type": "openai",    "url": "https://api.mistral.ai/v1",
+                  "model": "mistral-small-latest",              "key_env": "MISTRAL_API_KEY"},
+    "xai":       {"type": "openai",    "url": "https://api.x.ai/v1",
+                  "model": "grok-3-mini",                       "key_env": "XAI_API_KEY"},
+    "together":  {"type": "openai",    "url": "https://api.together.xyz/v1",
+                  "model": "meta-llama/Llama-3-70b-chat-hf",   "key_env": "TOGETHER_API_KEY"},
+    "ollama":    {"type": "openai",    "url": "http://localhost:11434/v1",
+                  "model": "llama3.2",                          "key_env": "OLLAMA_API_KEY"},
+}
 
-# Anthropic models
-_CLAUDE_FAST = "claude-haiku-4-5-20251001"
 
+def _resolve_config() -> dict:
+    """Build the active provider config from env vars, applying any overrides."""
+    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+    cfg = dict(_PRESETS.get(provider, {"type": "openai", "url": "", "model": "", "key_env": "LLM_API_KEY"}))
+
+    if os.getenv("LLM_API_KEY"):
+        cfg["key_env"] = "LLM_API_KEY"
+    if os.getenv("LLM_BASE_URL"):
+        cfg["url"] = os.environ["LLM_BASE_URL"]
+    if os.getenv("LLM_MODEL"):
+        cfg["model"] = os.environ["LLM_MODEL"]
+
+    return cfg
+
+
+def _get_api_key(cfg: dict) -> str:
+    key = os.getenv(cfg.get("key_env", "")) or os.getenv("LLM_API_KEY") or ""
+    if not key and cfg.get("url", "").startswith("http://localhost"):
+        key = "ollama"  # local server, no auth required
+    if not key:
+        raise RuntimeError(
+            f"No API key found. Set {cfg['key_env']} (or LLM_API_KEY) in your .env file."
+        )
+    return key
+
+
+def provider_label() -> str:
+    """Human-readable identifier for the active provider, shown in the startup banner."""
+    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+    cfg = _resolve_config()
+    return f"{provider} / {cfg.get('model', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
+# complete() — single-turn extraction calls (no tool use)
+# ---------------------------------------------------------------------------
 
 def complete(system: str, user: str, *, max_tokens: int = 1024) -> str:
-    """
-    Send a system + user prompt to the configured LLM and return the text reply.
-    """
-    if _PROVIDER == "anthropic":
-        return _anthropic_complete(system, user, max_tokens)
-    return _deepseek_complete(system, user, max_tokens)
+    """Send a system + user prompt and return the text reply."""
+    cfg = _resolve_config()
+    key = _get_api_key(cfg)
+    if cfg["type"] == "anthropic":
+        return _anthropic_complete(system, user, max_tokens, key, cfg["model"])
+    return _openai_complete(system, user, max_tokens, key, cfg)
 
 
-def _deepseek_complete(system: str, user: str, max_tokens: int) -> str:
+def _openai_complete(system: str, user: str, max_tokens: int, api_key: str, cfg: dict) -> str:
     from openai import OpenAI
-    from config import DEEPSEEK_API_KEY
-
-    client = OpenAI(
-        api_key=DEEPSEEK_API_KEY,
-        base_url="https://api.deepseek.com",
-    )
+    client = OpenAI(api_key=api_key, base_url=cfg.get("url") or None)
     resp = client.chat.completions.create(
-        model=_DEEPSEEK_CHAT,
+        model=cfg["model"],
         max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system},
@@ -47,15 +105,175 @@ def _deepseek_complete(system: str, user: str, max_tokens: int) -> str:
     return resp.choices[0].message.content.strip()
 
 
-def _anthropic_complete(system: str, user: str, max_tokens: int) -> str:
+def _anthropic_complete(system: str, user: str, max_tokens: int, api_key: str, model: str) -> str:
     from anthropic import Anthropic
-    from config import get_anthropic_api_key
-
-    client = Anthropic(api_key=get_anthropic_api_key())
+    client = Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model=_CLAUDE_FAST,
+        model=model,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}],
     )
     return msg.content[0].text.strip()
+
+
+# ---------------------------------------------------------------------------
+# chat_with_tools() — agent tool-calling loop
+# ---------------------------------------------------------------------------
+
+def chat_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    max_tokens: int = 4096,
+) -> tuple[str | None, list[dict] | None]:
+    """
+    Send a conversation (OpenAI-format, including system message) to the LLM.
+
+    Args:
+        messages: OpenAI-format message list (system message may be first).
+        tools:    OpenAI-format tool schemas.
+
+    Returns:
+        (text, None)       — model returned a text response.
+        (None, tool_calls) — model wants to invoke tools.
+
+    tool_calls format: [{"id": str, "name": str, "args": dict}, ...]
+    """
+    cfg = _resolve_config()
+    key = _get_api_key(cfg)
+    if cfg["type"] == "anthropic":
+        return _anthropic_chat_with_tools(messages, tools, max_tokens, key, cfg["model"])
+    return _openai_chat_with_tools(messages, tools, max_tokens, key, cfg)
+
+
+def _openai_chat_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    max_tokens: int,
+    api_key: str,
+    cfg: dict,
+) -> tuple[str | None, list[dict] | None]:
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key, base_url=cfg.get("url") or None)
+    response = client.chat.completions.create(
+        model=cfg["model"],
+        messages=messages,
+        tools=tools,
+        tool_choice="auto",
+        max_tokens=max_tokens,
+    )
+    choice = response.choices[0]
+    msg = choice.message
+
+    if choice.finish_reason == "tool_calls":
+        return None, [
+            {"id": tc.id, "name": tc.function.name, "args": json.loads(tc.function.arguments)}
+            for tc in msg.tool_calls
+        ]
+
+    return (msg.content or ""), None
+
+
+# --- Anthropic message format conversion ------------------------------------
+
+def _to_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+    """
+    Convert OpenAI-format message list to (system_text, anthropic_messages).
+
+    Tool results (role="tool") are batched into a single user message with
+    tool_result content blocks, as required by the Anthropic API.
+    """
+    system = ""
+    result: list[dict] = []
+    pending_results: list[dict] = []
+
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "system":
+            system = msg.get("content", "")
+            continue
+
+        if role != "tool" and pending_results:
+            result.append({"role": "user", "content": pending_results})
+            pending_results = []
+
+        if role == "user":
+            result.append({"role": "user", "content": msg["content"]})
+
+        elif role == "assistant":
+            tcs = msg.get("tool_calls")
+            if tcs:
+                blocks: list[dict] = []
+                if msg.get("content"):
+                    blocks.append({"type": "text", "text": msg["content"]})
+                for tc in tcs:
+                    args = tc["function"]["arguments"]
+                    if isinstance(args, str):
+                        args = json.loads(args)
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "input": args,
+                    })
+                result.append({"role": "assistant", "content": blocks})
+            else:
+                result.append({"role": "assistant", "content": msg.get("content", "")})
+
+        elif role == "tool":
+            pending_results.append({
+                "type": "tool_result",
+                "tool_use_id": msg["tool_call_id"],
+                "content": msg["content"],
+            })
+
+    if pending_results:
+        result.append({"role": "user", "content": pending_results})
+
+    return system, result
+
+
+def _to_anthropic_tools(tools: list[dict]) -> list[dict]:
+    """Convert OpenAI-format tool schemas to Anthropic tool schemas."""
+    return [
+        {
+            "name": t["function"]["name"],
+            "description": t["function"].get("description", ""),
+            "input_schema": t["function"]["parameters"],
+        }
+        for t in tools
+    ]
+
+
+def _anthropic_chat_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    max_tokens: int,
+    api_key: str,
+    model: str,
+) -> tuple[str | None, list[dict] | None]:
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    system, anthropic_messages = _to_anthropic_messages(messages)
+    anthropic_tools = _to_anthropic_tools(tools)
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        tools=anthropic_tools,
+        messages=anthropic_messages,
+    )
+
+    if response.stop_reason == "tool_use":
+        return None, [
+            {"id": b.id, "name": b.name, "args": b.input}
+            for b in response.content
+            if b.type == "tool_use"
+        ]
+
+    text = "".join(b.text for b in response.content if hasattr(b, "text"))
+    return text.strip() or "", None
