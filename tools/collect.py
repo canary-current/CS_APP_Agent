@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 from urllib.parse import urlparse
-from models import ProgramInfo, LanguageRequirements
+from models import ProgramInfo, LanguageRequirements, Tuition
 from tools.cache import get_cached, set_cached
 from tools.web import search as web_search, extract as web_extract
 import llm
@@ -30,15 +30,20 @@ _PROMPT = """\
 Extract graduate program details from the webpage text below.
 
 Return a JSON object with these keys (use null when information is absent):
-  deadline            – application deadline as a readable string, e.g. "December 15, 2025"
-  toefl_min           – minimum TOEFL iBT total score as an integer
-  ielts_min           – minimum IELTS overall band score as a float
-  english_waiver      – true if graduates of English-taught institutions are exempt from
-                        language tests; false if explicitly no waiver; null if not mentioned
-  language_notes      – any extra language-test details worth keeping (string or "")
-  funding             – concise summary of RA/TA/fellowship/stipend availability (string or "")
-  length_years        – program length in years as a number (e.g. 2, 4, 5.5)
-  courses             – list of course names or codes explicitly mentioned (may be empty)
+  deadline              – application deadline as a readable string, e.g. "December 15, 2025"
+  toefl_min             – minimum TOEFL iBT total score as an integer
+  ielts_min             – minimum IELTS overall band score as a float
+  english_waiver        – true if graduates of English-taught institutions are exempt from
+                          language tests; false if explicitly no waiver; null if not mentioned
+  language_notes        – any extra language-test details worth keeping (string or "")
+  tuition_local         – annual tuition for local/domestic students as a string with currency,
+                          e.g. "HK$42,100/year" or "US$18,000/year"; null if not found
+  tuition_international – annual tuition for international/non-local students as a string with
+                          currency, e.g. "HK$42,100/year"; null if not found or same as local
+  tuition_notes         – any clarifying notes on tuition (per credit, fee waivers, etc.) or ""
+  funding               – concise summary of RA/TA/fellowship/stipend availability (string or "")
+  length_years          – program length in years as a number (e.g. 2, 4, 5.5)
+  courses               – list of course names or codes explicitly mentioned (may be empty)
 
 Webpage text (truncated to 8 000 chars):
 {content}
@@ -149,6 +154,11 @@ def collect_program_info(url: str, school: str, program: str) -> ProgramInfo:
                 else bool(data["english_waiver"])
             ),
             notes=data.get("language_notes", ""),
+        ),
+        tuition=Tuition(
+            local=data.get("tuition_local"),
+            international=data.get("tuition_international"),
+            notes=data.get("tuition_notes", ""),
         ),
         funding=data.get("funding", ""),
         length_years=data.get("length_years"),

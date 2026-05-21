@@ -111,9 +111,21 @@ def save_program_md(
     if lr.notes:
         lines.append(f"- **Notes:** {lr.notes}")
 
+    t = info.tuition
     lines += [
         "",
-        "## Funding",
+        "## Tuition & Funding",
+        "",
+        "### Tuition",
+        f"- **Local / domestic:** {t.local or 'Not available'}",
+        f"- **International / non-local:** {t.international or 'Not available'}",
+    ]
+    if t.notes:
+        lines.append(f"- **Notes:** {t.notes}")
+
+    lines += [
+        "",
+        "### Funding",
         "",
         info.funding or "Not available",
         "",

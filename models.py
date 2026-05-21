@@ -17,12 +17,19 @@ class LanguageRequirements(BaseModel):
     notes: str = ""
 
 
+class Tuition(BaseModel):
+    local: str | None = None           # annual cost for domestic/local students
+    international: str | None = None   # annual cost for international/non-local students
+    notes: str = ""                    # e.g. currency, per-credit vs flat, fee waivers
+
+
 class ProgramInfo(BaseModel):
     school: str
     program: str
     url: str
     deadline: str | None = None
     language_requirements: LanguageRequirements = LanguageRequirements()
+    tuition: Tuition = Tuition()
     funding: str = ""
     length_years: float | None = None
     courses: list[str] = []

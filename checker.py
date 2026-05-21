@@ -39,7 +39,12 @@ REQUIRED: list[FieldSpec] = [
         is_missing=lambda i: i.language_requirements.english_institution_waiver is None,
     ),
     FieldSpec(
-        label="funding details (RA/TA availability, stipend amounts)",
+        label="tuition — annual cost for local and/or international students "
+              "(with currency and whether local/international rates differ)",
+        is_missing=lambda i: i.tuition.local is None and i.tuition.international is None,
+    ),
+    FieldSpec(
+        label="funding details (RA/TA availability, stipend amounts, fellowship info)",
         is_missing=lambda i: not i.funding,
     ),
     FieldSpec(

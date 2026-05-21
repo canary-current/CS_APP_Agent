@@ -116,8 +116,10 @@ _SYSTEM = textwrap.dedent("""\
     - English-institution waiver: <Yes / No / Not specified>
     - Notes: <any extra detail, or omit>
 
-    ### Funding
-    <RA/TA availability, stipend amounts, fellowship info>
+    ### Tuition & Funding
+    - Tuition (local/domestic): <amount with currency, or Not available>
+    - Tuition (international/non-local): <amount with currency, or Not available>
+    - Funding: <RA/TA/fellowship/stipend details>
 
     ### Program Length
     <length in years>
