@@ -18,7 +18,7 @@ from pathlib import Path
 
 import llm
 from models import ProgramInfo, ApplicationExample, LanguageRequirements, Tuition
-from tools.search import search_program, TOOL_SCHEMA as _SEARCH
+from tools.search import search_program, _score_url, TOOL_SCHEMA as _SEARCH
 from tools.collect import collect_program_info, TOOL_SCHEMA as _COLLECT
 from tools.examples import fetch_application_examples, TOOL_SCHEMA as _EXAMPLES
 from tools.export import save_program_md
@@ -246,46 +246,59 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
     """
     messages.append({"role": "user", "content": user_input})
 
-    for _ in range(_MAX_TOOL_ITERATIONS):
-        text, tool_calls, assistant_msg = llm.chat_with_tools(messages, _TOOLS)
-        messages.append(assistant_msg)
+    try:
+        for _ in range(_MAX_TOOL_ITERATIONS):
+            text, tool_calls, assistant_msg = llm.chat_with_tools(messages, _TOOLS)
+            messages.append(assistant_msg)
 
-        if tool_calls is not None:
-            for tc in tool_calls:
-                status.set(top=_tool_status_top(tc["name"], tc["args"]))
-                result_str = _dispatch(tc["name"], tc["args"])
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result_str,
-                })
-                if tc["name"] == "collect_program_info":
-                    try:
-                        data = json.loads(result_str)
-                        if "error" not in data:
-                            info = ProgramInfo(**data)
-                            _render_progress(info)
-                            _save_now(info)
-                    except Exception as exc:
-                        status.emit(f"  \033[33m⚠ Save skipped: {exc}\033[0m")
-
-                elif tc["name"] == "fetch_application_examples":
-                    try:
-                        data = json.loads(result_str)
-                        if isinstance(data, list) and data:
-                            new_exs = [ApplicationExample(**item) for item in data]
-                            ex_key = (new_exs[0].school, new_exs[0].program)
-                            if ex_key in _turn_infos:
-                                # Re-save with newly available examples.
-                                _save_now(_turn_infos[ex_key], new_exs)
+            if tool_calls is not None:
+                for tc in tool_calls:
+                    status.set(top=_tool_status_top(tc["name"], tc["args"]))
+                    result_str = _dispatch(tc["name"], tc["args"])
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_str,
+                    })
+                    if tc["name"] == "collect_program_info":
+                        try:
+                            data = json.loads(result_str)
+                            if "error" in data:
+                                status.emit(f"  \033[33m⚠ collect failed for "
+                                            f"{tc['args'].get('url', '?')}: "
+                                            f"{data['error']}\033[0m")
                             else:
-                                _turn_examples.setdefault(ex_key, []).extend(new_exs)
-                    except Exception:
-                        pass
+                                info = ProgramInfo(**data)
+                                _render_progress(info)
+                                _save_now(info)
+                        except Exception as exc:
+                            status.emit(f"  \033[33m⚠ Save skipped: {exc}\033[0m")
 
-        else:
-            return text or ""
+                    elif tc["name"] == "fetch_application_examples":
+                        try:
+                            data = json.loads(result_str)
+                            if isinstance(data, list) and data:
+                                new_exs = [ApplicationExample(**item) for item in data]
+                                ex_key = (new_exs[0].school, new_exs[0].program)
+                                if ex_key in _turn_infos:
+                                    _save_now(_turn_infos[ex_key], new_exs)
+                                else:
+                                    _turn_examples.setdefault(ex_key, []).extend(new_exs)
+                        except Exception:
+                            pass
 
+            else:
+                return text or ""
+    except KeyboardInterrupt:
+        # User pressed Ctrl-C mid-tool. Clean up the status block, leave the
+        # partial files on disk (already written by _save_now), and bubble out.
+        status.hide()
+        status.emit("\n  \033[33m⚠ Interrupted — partial results have been "
+                    "saved to schools/.\033[0m")
+        raise
+
+    status.set(top=" \033[36m▸\033[0m  Finalising answer…",
+               bottom=_progress_line(next(iter(_turn_infos.values()), None)))
     status.emit(f"  \033[33m⚠ Reached max tool iterations ({_MAX_TOOL_ITERATIONS}); "
                 f"forcing the model to produce a final answer.\033[0m")
     messages.append({
@@ -367,10 +380,13 @@ def _merge_program_infos(base: ProgramInfo, extra: ProgramInfo) -> ProgramInfo:
     """Merge extra into base, filling missing fields without overwriting existing ones."""
     lr_b, lr_e = base.language_requirements, extra.language_requirements
     t_b, t_e   = base.tuition, extra.tuition
+    # Source URL: prefer whichever page scored higher as an admissions/
+    # requirements page (so /apply/* wins over /tuition/* in the frontmatter).
+    chosen_url = base.url if _score_url(base.url) >= _score_url(extra.url) else extra.url
     return ProgramInfo(
         school=base.school,
         program=base.program,
-        url=base.url,
+        url=chosen_url,
         deadline=base.deadline if base.deadline is not None else extra.deadline,
         language_requirements=LanguageRequirements(
             toefl_min=lr_b.toefl_min if lr_b.toefl_min is not None else lr_e.toefl_min,
@@ -469,6 +485,10 @@ def main() -> None:
         turn_start = len(messages)
         try:
             reply = _run_turn(messages, user_input)
+        except KeyboardInterrupt:
+            # _run_turn already emitted the interrupt notice and cleared
+            # the status block; just go back to the prompt.
+            continue
         except Exception as exc:
             status.emit(f"\033[31mError: {exc}\033[0m")
             continue

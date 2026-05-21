@@ -175,7 +175,10 @@ def _anthropic_complete(system: str, user: str, max_tokens: int, api_key: str, m
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return msg.content[0].text.strip()
+    # Some stop_reasons (refusal, max_tokens with no text emitted) return an
+    # empty content list — guard against IndexError.
+    text = "".join(b.text for b in msg.content if hasattr(b, "text"))
+    return text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +329,10 @@ def _to_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
                     })
                 result.append({"role": "assistant", "content": blocks})
             else:
-                result.append({"role": "assistant", "content": msg.get("content", "")})
+                # Anthropic rejects assistant messages with empty content.
+                content = msg.get("content", "")
+                if content:
+                    result.append({"role": "assistant", "content": content})
 
         elif role == "tool":
             pending_results.append({

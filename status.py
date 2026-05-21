@@ -136,6 +136,11 @@ def emit(text: str = "") -> None:
     """
     Print text above the floating status block (multi-line text supported).
     The block is erased, the text prints, then the block redraws below it.
+
+    Each printed physical row is hard-truncated to terminal width so a long
+    string can't wrap and desynchronise the next _erase_block (which moves
+    up exactly two physical rows). Embedded \\n is honoured and each line
+    is truncated independently.
     """
     global _visible
     if not _is_tty():
@@ -147,7 +152,9 @@ def emit(text: str = "") -> None:
         _erase_block()
         _visible = False
     if text:
-        sys.stdout.write(text + "\n")
+        cols = _term_cols() - 1
+        for line in text.split("\n"):
+            sys.stdout.write(_truncate(line, cols) + "\n")
     if was_visible:
         _draw_block()
         _visible = True

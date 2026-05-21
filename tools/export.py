@@ -24,7 +24,10 @@ _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 
 def _safe(text: str) -> str:
     """Strip filesystem-unsafe characters; preserve spaces and original case."""
-    return _UNSAFE.sub("", text).strip()
+    cleaned = _UNSAFE.sub("", text).strip()
+    if not cleaned:
+        raise ValueError(f"Cannot derive a filesystem-safe name from {text!r}")
+    return cleaned
 
 
 def _slugify(text: str) -> str:
