@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 import json
+import shutil
 import sys
 import textwrap
 from pathlib import Path
@@ -287,9 +288,26 @@ _BANNER = """
 ╔══════════════════════════════════════════════╗
 ║        CS Graduate Application Agent         ║
 ║  Ask about any CS program — I'll research it ║
-║  Type  'exit'  or  Ctrl-C  to quit           ║
+║  /clear  — wipe cache & output files         ║
+║  exit    — quit                              ║
 ╚══════════════════════════════════════════════╝
 """
+
+_ROOT = Path(__file__).parent
+_CLEAR_DIRS = {"cache": _ROOT / "cache", "schools": _ROOT / "schools"}
+
+
+def _do_clear(targets: list[str]) -> None:
+    for name in targets:
+        path = _CLEAR_DIRS[name]
+        if not path.exists():
+            print(f"  {name}/  — already empty")
+            continue
+        count = sum(1 for f in path.rglob("*") if f.is_file())
+        shutil.rmtree(path)
+        path.mkdir()
+        print(f"  \033[32m✓ {name}/  — removed {count} file(s)\033[0m")
+    print()
 
 
 def main() -> None:
@@ -310,6 +328,17 @@ def main() -> None:
         if user_input.lower() in ("exit", "quit", "bye"):
             print("Bye!")
             sys.exit(0)
+
+        cmd = user_input.lower()
+        if cmd == "/clear":
+            _do_clear(list(_CLEAR_DIRS))
+            continue
+        if cmd == "/clear cache":
+            _do_clear(["cache"])
+            continue
+        if cmd == "/clear schools":
+            _do_clear(["schools"])
+            continue
 
         print()
         turn_start = len(messages)
