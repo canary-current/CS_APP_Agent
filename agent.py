@@ -188,13 +188,18 @@ def _reset_turn_state() -> None:
     _turn_announced.clear()
 
 
-def _render_progress(info: ProgramInfo) -> None:
-    """Render the field-completeness bar on the bottom status line."""
+def _progress_line(info: ProgramInfo | None = None) -> str:
+    """Build the field-completeness bar string.
+
+    With info=None, every field is treated as missing (the "pre-collect"
+    state shown at the start of each turn so the user sees the bar
+    structure immediately instead of a placeholder).
+    """
     total = len(checker.REQUIRED)
     missing_shorts: list[str] = []
     bar = ""
     for spec in checker.REQUIRED:
-        if spec.is_missing(info):
+        if info is None or spec.is_missing(info):
             bar += "\033[33m░\033[0m"   # yellow empty block
             missing_shorts.append(spec.short or spec.label.split()[0])
         else:
@@ -205,7 +210,12 @@ def _render_progress(info: ProgramInfo) -> None:
         suffix = "  missing: " + " · ".join(missing_shorts)
     else:
         suffix = "  \033[32mall fields found\033[0m"
-    status.set(bottom=f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}")
+    return f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}"
+
+
+def _render_progress(info: ProgramInfo) -> None:
+    """Render the field-completeness bar on the bottom status line."""
+    status.set(bottom=_progress_line(info))
 
 
 def _tool_status_top(name: str, args: dict) -> str:
@@ -454,7 +464,7 @@ def main() -> None:
         _reset_turn_state()
         status.set(
             top=" \033[36m▸\033[0m  Starting…",
-            bottom=" \033[36m●\033[0m  Searching…",
+            bottom=_progress_line(),
         )
         turn_start = len(messages)
         try:
