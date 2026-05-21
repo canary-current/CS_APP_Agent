@@ -24,6 +24,7 @@ from tools.examples import fetch_application_examples, TOOL_SCHEMA as _EXAMPLES
 from tools.export import save_program_md
 from clean import CLEAR_DIRS, clear_dir
 import checker
+import status
 
 # ---------------------------------------------------------------------------
 # Tool registry
@@ -142,8 +143,8 @@ _SYSTEM = textwrap.dedent("""\
 # Progress bar
 # ---------------------------------------------------------------------------
 
-def _print_progress(info: ProgramInfo) -> None:
-    """Print a one-line field-completeness bar after a collect_program_info call."""
+def _render_progress(info: ProgramInfo) -> None:
+    """Render the field-completeness bar to the persistent status line."""
     total = len(checker.REQUIRED)
     missing_shorts: list[str] = []
     bar = ""
@@ -155,12 +156,11 @@ def _print_progress(info: ProgramInfo) -> None:
             bar += "\033[32m█\033[0m"   # green filled block
 
     filled = total - len(missing_shorts)
-    suffix = (
-        "  missing: " + " · ".join(missing_shorts)
-        if missing_shorts
-        else "  \033[32mall fields found\033[0m"
-    )
-    print(f"  [{bar}] {filled}/{total}{suffix}", flush=True)
+    if missing_shorts:
+        suffix = "  missing: " + " · ".join(missing_shorts)
+    else:
+        suffix = "  \033[32mall fields found\033[0m"
+    status.render(f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}")
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +183,9 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
 
         if tool_calls is not None:
             for tc in tool_calls:
-                print(f"\n  \033[36m⚙ {_tool_label(tc['name'], tc['args'])}\033[0m",
-                      flush=True)
+                label = _tool_label(tc['name'], tc['args'])
+                print(f"\n  \033[36m⚙ {label}\033[0m", flush=True)
+                status.render(f" \033[36m●\033[0m  Running: {label}")
                 result_str = _dispatch(tc["name"], tc["args"])
                 messages.append({
                     "role": "tool",
@@ -195,7 +196,7 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
                     try:
                         data = json.loads(result_str)
                         if "error" not in data:
-                            _print_progress(ProgramInfo(**data))
+                            _render_progress(ProgramInfo(**data))
                     except Exception:
                         pass
 
@@ -398,6 +399,9 @@ def main() -> None:
 
     print(f"  Provider: {llm.provider_label()}\n")
 
+    status.enable()
+    status.render(" \033[36m●\033[0m  Ready — ask about any CS program")
+
     while True:
         try:
             user_input = input("You: ").strip()
@@ -423,11 +427,13 @@ def main() -> None:
             continue
 
         print()
+        status.render(" \033[36m●\033[0m  Searching…")
         turn_start = len(messages)
         try:
             reply = _run_turn(messages, user_input)
         except Exception as exc:
             print(f"\033[31mError: {exc}\033[0m")
+            status.render(" \033[31m●\033[0m  Error — ready for next query")
             continue
 
         try:
@@ -442,6 +448,8 @@ def main() -> None:
             _export_results(messages, turn_start)
         except Exception as exc:
             print(f"\033[33m⚠ Export error: {exc}\033[0m")
+
+        status.render(" \033[36m●\033[0m  Ready — ask about another program")
 
 
 if __name__ == "__main__":
