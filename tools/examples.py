@@ -24,6 +24,7 @@ from tools.web import search as web_search, extract as web_extract
 import llm
 
 _RESULTS_PER_TYPE = 3   # how many pages to fetch per search query
+_CHAR_LIMIT = 18_000   # cap for essay/stats pages; use full content below this
 
 # Domains that host real SOPs / admission results — boosted in ranking
 _PREFERRED_ESSAY_DOMAINS = [
@@ -51,7 +52,7 @@ Summarise it in a JSON object with these keys:
   tips            – up to 3 concrete writing tips implied by this example
                     (list of strings, may be empty)
 
-Webpage text (truncated to 6 000 chars):
+Webpage text ({note}):
 {content}
 """
 
@@ -67,7 +68,7 @@ Summarise in a JSON object with these keys:
   tips            – up to 3 actionable insights for applicants (list of strings,
                     may be empty)
 
-Webpage text (truncated to 6 000 chars):
+Webpage text ({note}):
 {content}
 """
 
@@ -83,14 +84,21 @@ def _ranked_search(query: str, preferred_domains: list[str]) -> list[dict]:
     return sorted(results, key=_rank, reverse=True)
 
 
+def _truncate(content: str) -> tuple[str, str]:
+    """Return (content_to_send, note_for_prompt)."""
+    if len(content) <= _CHAR_LIMIT:
+        return content, f"{len(content):,} chars"
+    return content[:_CHAR_LIMIT], f"{_CHAR_LIMIT:,} of {len(content):,} chars (truncated)"
+
+
 def _summarise_page(url: str, prompt_template: str) -> dict | None:
     """Fetch a page and return the LLM summary dict, or None on failure."""
     content = web_extract(url)
     if not content:
         return None
-    content = content[:6000]
+    content, note = _truncate(content)
 
-    raw = llm.complete(_SYSTEM, prompt_template.format(content=content))
+    raw = llm.complete(_SYSTEM, prompt_template.format(content=content, note=note))
     raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
     raw = re.sub(r"\s*```$", "", raw)
 

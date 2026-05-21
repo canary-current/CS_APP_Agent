@@ -48,15 +48,26 @@ Return a JSON object with these keys (use null when information is absent):
   length_years          – program length in years as a number (e.g. 2, 4, 5.5)
   courses               – list of course names or codes explicitly mentioned (may be empty)
 
-Webpage text (truncated to 8 000 chars):
+Webpage text ({note}):
 {content}
 """
 
 _CRITICAL_FIELDS = ("deadline", "toefl_min", "ielts_min")
 
+# Send the full page for short content; cap long pages at this limit.
+# Most admission pages are under 20 k chars; pushing past that adds noise.
+_CHAR_LIMIT = 24_000
+
 
 def _is_sparse(data: dict) -> bool:
     return all(data.get(f) is None for f in _CRITICAL_FIELDS)
+
+
+def _truncate(content: str) -> tuple[str, str]:
+    """Return (content_to_send, note_for_prompt)."""
+    if len(content) <= _CHAR_LIMIT:
+        return content, f"{len(content):,} chars"
+    return content[:_CHAR_LIMIT], f"{_CHAR_LIMIT:,} of {len(content):,} chars (truncated)"
 
 
 def _extract_from_url(url: str) -> dict | None:
@@ -64,9 +75,9 @@ def _extract_from_url(url: str) -> dict | None:
     content = web_extract(url)
     if not content:
         return None
-    content = content[:8000]
+    content, note = _truncate(content)
 
-    raw = llm.complete(_SYSTEM, _PROMPT.format(content=content))
+    raw = llm.complete(_SYSTEM, _PROMPT.format(content=content, note=note))
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
     try:
