@@ -7,7 +7,7 @@ exactly what to search for next.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 from models import ProgramInfo
 
@@ -16,6 +16,7 @@ from models import ProgramInfo
 class FieldSpec:
     label: str                          # shown to the agent in the follow-up prompt
     is_missing: Callable[[ProgramInfo], bool]
+    short: str = ""                     # abbreviated name for the progress bar
 
 
 # Every field in this list is considered mandatory.
@@ -24,32 +25,39 @@ REQUIRED: list[FieldSpec] = [
     FieldSpec(
         label="application deadline",
         is_missing=lambda i: i.deadline is None,
+        short="deadline",
     ),
     FieldSpec(
         label="TOEFL minimum score",
         is_missing=lambda i: i.language_requirements.toefl_min is None,
+        short="TOEFL",
     ),
     FieldSpec(
         label="IELTS minimum score",
         is_missing=lambda i: i.language_requirements.ielts_min is None,
+        short="IELTS",
     ),
     FieldSpec(
         label="English-institution language test waiver policy "
               "(does a degree from an English-taught institution waive the test?)",
         is_missing=lambda i: i.language_requirements.english_institution_waiver is None,
+        short="waiver",
     ),
     FieldSpec(
         label="tuition — annual cost for local and/or international students "
               "(with currency and whether local/international rates differ)",
         is_missing=lambda i: i.tuition.local is None and i.tuition.international is None,
+        short="tuition",
     ),
     FieldSpec(
         label="funding details (RA/TA availability, stipend amounts, fellowship info)",
         is_missing=lambda i: not i.funding,
+        short="funding",
     ),
     FieldSpec(
         label="program length in years",
         is_missing=lambda i: i.length_years is None,
+        short="length",
     ),
 ]
 

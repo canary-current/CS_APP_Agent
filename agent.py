@@ -139,6 +139,31 @@ _SYSTEM = textwrap.dedent("""\
 """)
 
 # ---------------------------------------------------------------------------
+# Progress bar
+# ---------------------------------------------------------------------------
+
+def _print_progress(info: ProgramInfo) -> None:
+    """Print a one-line field-completeness bar after a collect_program_info call."""
+    total = len(checker.REQUIRED)
+    missing_shorts: list[str] = []
+    bar = ""
+    for spec in checker.REQUIRED:
+        if spec.is_missing(info):
+            bar += "\033[33m░\033[0m"   # yellow empty block
+            missing_shorts.append(spec.short or spec.label.split()[0])
+        else:
+            bar += "\033[32m█\033[0m"   # green filled block
+
+    filled = total - len(missing_shorts)
+    suffix = (
+        "  missing: " + " · ".join(missing_shorts)
+        if missing_shorts
+        else "  \033[32mall fields found\033[0m"
+    )
+    print(f"  [{bar}] {filled}/{total}{suffix}", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
 
@@ -163,6 +188,13 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
                     "tool_call_id": tc["id"],
                     "content": result_str,
                 })
+                if tc["name"] == "collect_program_info":
+                    try:
+                        data = json.loads(result_str)
+                        if "error" not in data:
+                            _print_progress(ProgramInfo(**data))
+                    except Exception:
+                        pass
 
         else:
             return text or ""
