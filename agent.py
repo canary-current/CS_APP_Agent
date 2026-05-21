@@ -97,25 +97,23 @@ _SYSTEM = textwrap.dedent("""\
     3. Call fetch_application_examples for essay and stats context.
     4. Present a complete answer using the format below.
 
-    IMPORTANT — one program at a time:
+    IMPORTANT — one program per turn:
+    • You can only research ONE (school, program) pair per user turn.
     • If the user asks about multiple programs (e.g. "MIT and Stanford CS PhD"
-      or "five good TCS master programs"), research them STRICTLY SEQUENTIALLY.
-      Complete steps 1–4 for the first program — including the final written
-      answer — BEFORE issuing any tool call for the next program.
-    • Never interleave tool calls for different (school, program) pairs.
+      or "five good TCS master programs"), DO NOT call any tools. Instead,
+      reply with a short message listing the programs you would suggest and
+      ask the user to pick ONE to research first. Example:
+        "I can research one program per turn so I can be thorough. Here are
+        five well-known options for theoretical CS master's programs —
+        MIT MS in EECS, Stanford MS CS, CMU MSCS, Berkeley MS EECS, Princeton
+        MSE in CS. Which would you like me to look up first?"
+    • Once the user picks one, do the full search → collect → examples →
+      answer workflow for that single program.
     • Emit exactly one tool call per response; wait for its result before
       deciding the next step.
-
-    IMPORTANT — per-program tool budget:
-    • Aim for ~3–5 tool calls per program: 1 search_program, 1–2 collect_program_info,
-      1 fetch_application_examples. DO NOT keep trying new URLs to fill the same
-      missing field — if a page returns an error or sparse data after one retry,
-      ACCEPT "Not available" for that field and move on.
-    • If the user asked for N programs, you have a hard budget of ~30 tool calls
-      total across the whole turn — allocate roughly 30/N calls per program.
-    • After finishing a program (writing its complete-format answer in the reply
-      text), immediately start the next program's search. Do not stop until you
-      have covered every program the user asked for.
+    • If a page returns an error or sparse data, retry at most ONCE on a
+      different URL from the same official domain, then accept "Not available"
+      for any remaining missing fields and produce the final answer.
 
     IMPORTANT — school and program names:
     • Always pass the full official institution name (e.g. "Hong Kong University
@@ -360,22 +358,17 @@ def _completeness_followup(
     turn_start: int,
 ) -> str | None:
     """
-    Inspect every collect_program_info result from the latest turn.
-    If any required fields are missing, inject one follow-up turn automatically
-    and return its reply. Returns None if everything is complete.
+    Inspect the program collected in the latest turn. If any required fields
+    are missing, inject one follow-up turn automatically and return its reply.
+    Returns None if everything is complete.
 
-    Skipped entirely when the turn covered multiple programs — re-running
-    _run_turn with a "fill these missing fields for all of them" prompt
-    burns the whole tool budget again on programs the user already saw.
+    The system prompt now enforces one program per turn, so _turn_infos
+    should contain at most one (school, program) entry. We read from there
+    directly (post-merge) instead of re-scanning raw tool results.
     """
-    # Use the in-memory turn map (which has had _merge_program_infos applied)
-    # rather than scanning raw tool results — gives us one merged ProgramInfo
-    # per (school, program) instead of one entry per collect call.
     infos = list(_turn_infos.values())
     if not infos:
         return None
-    if len(infos) > 1:
-        return None  # multi-program query: don't double-spend the budget
 
     prompts: list[str] = []
     total_missing = 0
