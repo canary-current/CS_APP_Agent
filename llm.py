@@ -47,7 +47,7 @@ _PRESETS: dict[str, dict] = {
 
 def _resolve_config() -> dict:
     """Build the active provider config from env vars, applying any overrides."""
-    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     cfg = dict(_PRESETS.get(provider, {"type": "openai", "url": "", "model": "", "key_env": "LLM_API_KEY"}))
 
     if os.getenv("LLM_API_KEY"):
@@ -73,44 +73,55 @@ def _get_api_key(cfg: dict) -> str:
 
 def provider_label() -> str:
     """Human-readable identifier for the active provider, shown in the startup banner."""
-    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "?"
     cfg = _resolve_config()
     return f"{provider} / {cfg.get('model', 'unknown')}"
 
 
 def validate_config() -> tuple[bool, str]:
     """
-    Check that the active provider has an API key configured.
+    Check that LLM_PROVIDER is set and its API key is configured.
 
     Returns:
         (True, "")              — config is valid, ready to go.
-        (False, hint_message)   — key missing; hint tells the user what to set.
+        (False, hint_message)   — something is missing; hint tells the user what to set.
     """
-    cfg = _resolve_config()
-    provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
-    is_local = cfg.get("url", "").startswith("http://localhost")
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
 
+    if not provider:
+        presets = ", ".join(sorted(_PRESETS))
+        return False, (
+            "LLM_PROVIDER is not set in your .env file.\n"
+            "\n"
+            "Add these lines to .env:\n"
+            "\n"
+            "  LLM_PROVIDER=<provider>\n"
+            "  <PROVIDER>_API_KEY=<your-key>\n"
+            "\n"
+            f"Supported presets: {presets}\n"
+            "\n"
+            "For a custom OpenAI-compatible endpoint, use:\n"
+            "  LLM_PROVIDER=<any-name>\n"
+            "  LLM_BASE_URL=<base-url>\n"
+            "  LLM_API_KEY=<your-key>\n"
+            "  LLM_MODEL=<model-name>"
+        )
+
+    cfg = _resolve_config()
+    is_local = cfg.get("url", "").startswith("http://localhost")
     key = os.getenv(cfg.get("key_env", "")) or os.getenv("LLM_API_KEY") or ""
+
     if key or is_local:
         return True, ""
 
     key_env = cfg.get("key_env", "LLM_API_KEY")
-    lines = [
-        f"No API key found for provider '{provider}'.",
-        f"Add the following to your .env file:",
-        f"",
-        f"  LLM_PROVIDER={provider}",
-        f"  {key_env}=<your-key>",
-    ]
-    if provider not in _PRESETS:
-        lines += [
-            f"",
-            f"Or set a custom endpoint:",
-            f"  LLM_BASE_URL=<your-base-url>",
-            f"  LLM_API_KEY=<your-key>",
-            f"  LLM_MODEL=<model-name>",
-        ]
-    return False, "\n".join(lines)
+    return False, (
+        f"No API key found for provider '{provider}'.\n"
+        f"\n"
+        f"Add this to your .env file:\n"
+        f"\n"
+        f"  {key_env}=<your-key>"
+    )
 
 
 # ---------------------------------------------------------------------------
