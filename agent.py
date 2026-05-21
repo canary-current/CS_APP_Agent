@@ -157,13 +157,10 @@ def _save_now(info: ProgramInfo, examples: list[ApplicationExample] | None = Non
     try:
         path = save_program_md(info, _turn_examples.get(key, []))
     except Exception as exc:
-        status.seal()
-        print(f"  \033[33m⚠ Save error for {info.school} — {info.program}: {exc}\033[0m",
-              flush=True)
+        status.emit(f"  \033[33m⚠ Save error for {info.school} — {info.program}: {exc}\033[0m")
         return
     rel = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path
-    status.seal()
-    print(f"  \033[32m📄 Saved → {rel}\033[0m", flush=True)
+    status.emit(f"  \033[32m📄 Saved → {rel}\033[0m")
 
 
 # Turn-scoped accumulators reset at the start of each REPL turn.
@@ -193,7 +190,7 @@ def _render_progress(info: ProgramInfo) -> None:
         suffix = "  missing: " + " · ".join(missing_shorts)
     else:
         suffix = "  \033[32mall fields found\033[0m"
-    status.render(bottom=f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}")
+    status.set(bottom=f" \033[36m●\033[0m  Progress  [{bar}] {filled}/{total}{suffix}")
 
 
 def _tool_status_top(name: str, args: dict) -> str:
@@ -230,7 +227,7 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
 
         if tool_calls is not None:
             for tc in tool_calls:
-                status.render(top=_tool_status_top(tc["name"], tc["args"]))
+                status.set(top=_tool_status_top(tc["name"], tc["args"]))
                 result_str = _dispatch(tc["name"], tc["args"])
                 messages.append({
                     "role": "tool",
@@ -245,8 +242,7 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
                             _render_progress(info)
                             _save_now(info)
                     except Exception as exc:
-                        status.seal()
-                        print(f"  \033[33m⚠ Save skipped: {exc}\033[0m", flush=True)
+                        status.emit(f"  \033[33m⚠ Save skipped: {exc}\033[0m")
 
                 elif tc["name"] == "fetch_application_examples":
                     try:
@@ -265,9 +261,8 @@ def _run_turn(messages: list[dict], user_input: str) -> str:
         else:
             return text or ""
 
-    status.seal()
-    print(f"  \033[33m⚠ Reached max tool iterations ({_MAX_TOOL_ITERATIONS}); "
-          f"forcing the model to produce a final answer.\033[0m", flush=True)
+    status.emit(f"  \033[33m⚠ Reached max tool iterations ({_MAX_TOOL_ITERATIONS}); "
+                f"forcing the model to produce a final answer.\033[0m")
     messages.append({
         "role": "user",
         "content": (
@@ -332,10 +327,9 @@ def _completeness_followup(
     if not prompts:
         return None
 
-    print(
-        f"\n  \033[33m⚠ Completeness check: {total_missing} required field(s) missing"
-        f" — auto-searching…\033[0m",
-        flush=True,
+    status.emit(
+        f"  \033[33m⚠ Completeness check: {total_missing} required field(s) missing"
+        f" — auto-searching…\033[0m"
     )
     return _run_turn(messages, "\n\n".join(prompts))
 
@@ -416,7 +410,7 @@ def main() -> None:
     status.enable()
 
     while True:
-        status.seal()
+        status.hide()
         try:
             user_input = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -443,7 +437,7 @@ def main() -> None:
 
         print()
         _reset_turn_state()
-        status.render(
+        status.set(
             top=" \033[36m▸\033[0m  Starting…",
             bottom=" \033[36m●\033[0m  Searching…",
         )
@@ -451,23 +445,25 @@ def main() -> None:
         try:
             reply = _run_turn(messages, user_input)
         except Exception as exc:
-            status.seal()
-            print(f"\033[31mError: {exc}\033[0m")
+            status.emit(f"\033[31mError: {exc}\033[0m")
             continue
 
         try:
             followup = _completeness_followup(messages, turn_start)
         except Exception as exc:
-            status.seal()
-            print(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
+            status.emit(f"\033[33m⚠ Completeness check error: {exc}\033[0m")
             followup = None
 
-        status.seal()
-        print(f"\nAgent:\n{followup if followup else reply}\n")
+        status.emit(f"\nAgent:\n{followup if followup else reply}\n")
 
         if not _turn_infos:
-            print("  \033[33mℹ No program data collected this turn — "
-                  "nothing to save.\033[0m", flush=True)
+            status.emit("  \033[33mℹ No program data collected this turn — "
+                        "nothing to save.\033[0m")
+
+        status.set(
+            top=" \033[36m▸\033[0m  Idle",
+            bottom=" \033[36m●\033[0m  Ready — ask about another program",
+        )
 
 
 if __name__ == "__main__":

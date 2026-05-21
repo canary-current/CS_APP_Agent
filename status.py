@@ -1,23 +1,17 @@
 """
-Two-line in-place status updater.
+A two-line live status block that floats at the visible bottom of output.
 
-render(top=..., bottom=...) prints two lines below the current output.
-Subsequent render() calls overwrite those two lines in place via cursor
-movement — useful for showing "current URL" + "progress bar" that update
-many times during one tool-calling loop without flooding the scrollback.
+Use set() to update one or both lines — the block redraws in place.
+Use emit() to print permanent content above the block; the block is
+erased, the content prints, then the block re-renders below it.
+Use hide() before input() so the prompt appears on a clean line; the
+next set() will re-render the block below the user's typed input.
 
-seal() commits the current block: the next render() starts a fresh
-two-line block below whatever has been printed since. Call seal() before
-any output that should appear permanently in scrollback (agent reply,
-errors, saved-file messages, the next "You:" prompt).
+Uses only relative cursor movement (\\033[2A) and clear-to-end-of-screen
+(\\033[0J) — both reliably supported on every VT100-compatible terminal,
+including macOS Terminal.app, iTerm2, Linux gnome-terminal, etc.
 
-No scroll regions, no cursor save/restore — both of those are flaky on
-macOS Terminal.app. This module relies only on relative cursor movement
-(\\033[2A) and line erase (\\033[2K), which every VT100-compatible
-terminal supports reliably.
-
-If stdout is not a TTY, render() falls back to plain print() so logs
-and CI output still look reasonable.
+Falls back to plain print() when stdout is not a TTY.
 """
 
 from __future__ import annotations
@@ -26,7 +20,7 @@ import sys
 _CSI = "\033["
 _top = ""
 _bottom = ""
-_committed = True  # True = no live status block; next render starts fresh
+_visible = False
 
 
 def _is_tty() -> bool:
@@ -36,9 +30,19 @@ def _is_tty() -> bool:
         return False
 
 
-def render(*, top: str | None = None, bottom: str | None = None) -> None:
-    """Update one or both lines of the live status block."""
-    global _top, _bottom, _committed
+def _erase_block() -> None:
+    """Move cursor up 2 lines and clear to end of screen. Caller flushes."""
+    sys.stdout.write(f"{_CSI}2A\r{_CSI}0J")
+
+
+def _draw_block() -> None:
+    """Write the two status lines starting at the current cursor position."""
+    sys.stdout.write(f"{_top}\n{_bottom}\n")
+
+
+def set(*, top: str | None = None, bottom: str | None = None) -> None:
+    """Update one or both lines; the block redraws in place at the same position."""
+    global _top, _bottom, _visible
     if top is not None:
         _top = top
     if bottom is not None:
@@ -51,47 +55,64 @@ def render(*, top: str | None = None, bottom: str | None = None) -> None:
             print(bottom, flush=True)
         return
 
-    if not _committed:
-        # Move cursor up to the start of the existing status block.
-        sys.stdout.write(f"{_CSI}2A\r")
-
-    sys.stdout.write(f"{_CSI}2K{_top}\n")
-    sys.stdout.write(f"\r{_CSI}2K{_bottom}\n")
+    if _visible:
+        _erase_block()
+    _draw_block()
     sys.stdout.flush()
-    _committed = False
+    _visible = True
 
 
-def seal() -> None:
-    """
-    Commit the current status block. Subsequent prints scroll normally
-    below it, and the next render() starts a fresh block.
-    """
-    global _committed
-    _committed = True
+def hide() -> None:
+    """Erase the block; the next set() or show() will redraw it."""
+    global _visible
+    if not _visible or not _is_tty():
+        return
+    _erase_block()
+    sys.stdout.flush()
+    _visible = False
 
 
-def clear() -> None:
-    """Erase the live status block (if any) and reset to a sealed state."""
-    global _committed, _top, _bottom
-    if not _committed and _is_tty():
-        sys.stdout.write(f"{_CSI}2A\r{_CSI}2K\n\r{_CSI}2K\n{_CSI}2A\r")
+def show() -> None:
+    """Redraw the block at the current cursor position (no value change)."""
+    global _visible
+    if _visible or not _is_tty():
+        return
+    if _top or _bottom:
+        _draw_block()
         sys.stdout.flush()
-    _committed = True
-    _top = ""
-    _bottom = ""
+        _visible = True
 
 
-# Compatibility shims for the old scroll-region API.
+def emit(text: str = "") -> None:
+    """
+    Print a message above the floating status block. The block is erased,
+    the text prints (may be multi-line), then the block re-renders below.
+    """
+    global _visible
+    if not _is_tty():
+        print(text, flush=True)
+        return
+
+    was_visible = _visible
+    if was_visible:
+        _erase_block()
+        _visible = False
+    if text:
+        sys.stdout.write(text + "\n")
+    if was_visible:
+        _draw_block()
+        _visible = True
+    sys.stdout.flush()
+
+
 def enable() -> None:
+    """Reserved for setup parity with previous API. Currently a no-op."""
     pass
 
 
 def disable() -> None:
-    global _committed
-    if not _committed and _is_tty():
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-    _committed = True
+    """Hide the block cleanly on exit."""
+    hide()
 
 
 def shorten_url(url: str, max_len: int = 80) -> str:
